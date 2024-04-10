@@ -19,6 +19,7 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import WandbLogger
 
 from diffcsp.pl_data.datamodule import CrystDataModule
+from diffcsp.pl_modules.cspnet import CSPNet
 print(CrystDataModule)
 
 from diffcsp.common.utils import log_hyperparameters, PROJECT_ROOT
