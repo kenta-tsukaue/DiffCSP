@@ -18,6 +18,9 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import WandbLogger
 
+from diffcsp.pl_data.datamodule import CrystDataModule
+print(CrystDataModule)
+
 from diffcsp.common.utils import log_hyperparameters, PROJECT_ROOT
 
 import wandb
@@ -88,7 +91,6 @@ def run(cfg: DictConfig) -> None:
 
     # Hydra run directory
     hydra_dir = Path(HydraConfig.get().run.dir)
-
 
     # Instantiate datamodule
     hydra.utils.log.info(f"Instantiating <{cfg.data.datamodule._target_}>")
