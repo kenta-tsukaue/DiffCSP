@@ -89,6 +89,8 @@ def run(cfg: DictConfig) -> None:
     # Hydra run directory
     hydra_dir = Path(HydraConfig.get().run.dir)
 
+    print("yaa")
+
     # Instantiate datamodule
     hydra.utils.log.info(f"Instantiating <{cfg.data.datamodule._target_}>")
     datamodule: pl.LightningDataModule = hydra.utils.instantiate(
