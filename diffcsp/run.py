@@ -64,7 +64,7 @@ def build_callbacks(cfg: DictConfig) -> List[Callback]:
 
 
 def run(cfg: DictConfig) -> None:
-    """
+    """++++
     Generic train loop
 
     :param cfg: run configuration, defined by Hydra in /conf
@@ -89,7 +89,6 @@ def run(cfg: DictConfig) -> None:
     # Hydra run directory
     hydra_dir = Path(HydraConfig.get().run.dir)
 
-    print("yaa")
 
     # Instantiate datamodule
     hydra.utils.log.info(f"Instantiating <{cfg.data.datamodule._target_}>")
