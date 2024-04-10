@@ -28,6 +28,9 @@ import wandb
 
 os.environ['HYDRA_FULL_ERROR'] = '1'
 
+
+
+
 def build_callbacks(cfg: DictConfig) -> List[Callback]:
     callbacks: List[Callback] = []
 
@@ -114,6 +117,12 @@ def run(cfg: DictConfig) -> None:
     if datamodule.scaler is not None:
         model.lattice_scaler = datamodule.lattice_scaler.copy()
         model.scaler = datamodule.scaler.copy()
+        # 確認したいディレクトリのパス
+    directory_path = hydra_dir / 'lattice_scaler.pt'
+
+    # ディレクトリが存在しない場合は作成する
+    if not os.path.exists(directory_path.parent):
+        os.makedirs(directory_path.parent)
     torch.save(datamodule.lattice_scaler, hydra_dir / 'lattice_scaler.pt')
     torch.save(datamodule.scaler, hydra_dir / 'prop_scaler.pt')
     # Instantiate the callbacks
