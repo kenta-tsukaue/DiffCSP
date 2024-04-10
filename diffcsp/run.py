@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import List
 import sys
@@ -21,7 +22,7 @@ from diffcsp.common.utils import log_hyperparameters, PROJECT_ROOT
 
 import wandb
 
-
+os.environ['HYDRA_FULL_ERROR'] = '1'
 
 def build_callbacks(cfg: DictConfig) -> List[Callback]:
     callbacks: List[Callback] = []
