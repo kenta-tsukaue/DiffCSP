@@ -44,7 +44,7 @@ class BaseModule(pl.LightningModule):
                 'scheduler': scheduler,
                 'monitor': 'val_loss', 
                 'interval': 'epoch',
-                'frequency': 1
+                'frequency': 2
             }
             return [optimizer], [scheduler_config]
         else:
