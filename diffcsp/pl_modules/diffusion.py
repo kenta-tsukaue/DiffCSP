@@ -41,9 +41,10 @@ class BaseModule(pl.LightningModule):
         if self.hparams.optim.use_lr_scheduler:
             scheduler = hydra.utils.instantiate(self.hparams.optim.lr_scheduler, optimizer=optimizer)
             scheduler_config = {
-                'scheduler': scheduler, 
+                'scheduler': scheduler,
+                'monitor': 'val_loss', 
                 'interval': 'epoch',
-                'frequency': 1
+                'frequency': 5
             }
             return [optimizer], [scheduler_config]
         else:
