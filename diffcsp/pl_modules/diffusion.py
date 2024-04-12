@@ -38,7 +38,7 @@ class BaseModule(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = hydra.utils.instantiate(self.hparams.optim.optimizer,params=self.parameters(), _convert_="partial")  # YAMLからオプティマイザ設定を読み込み
 
-        if self.hparams.use_lr_scheduler:
+        if self.hparams.optim.use_lr_scheduler:
             scheduler = hydra.utils.instantiate(self.hparams.lr_scheduler, optimizer=optimizer)
             scheduler_config = {
                 'scheduler': scheduler,
