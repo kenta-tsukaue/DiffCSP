@@ -42,7 +42,7 @@ class BaseModule(pl.LightningModule):
             scheduler = hydra.utils.instantiate(self.hparams.optim.lr_scheduler, optimizer=optimizer)
             scheduler_config = {
                 'scheduler': scheduler,
-                'monitor': 'val_loss',  # ReduceLROnPlateauが監視するメトリック
+                'monitor': 'val_loss', 
                 'interval': 'epoch',
                 'frequency': 1
             }
@@ -295,6 +295,7 @@ class CSPDiffusion(BaseModule):
         return loss
 
     def compute_stats(self, output_dict, prefix):
+        print(prefix)
 
         loss_lattice = output_dict['loss_lattice']
         loss_coord = output_dict['loss_coord']
