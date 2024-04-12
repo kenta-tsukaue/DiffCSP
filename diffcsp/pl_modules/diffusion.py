@@ -260,6 +260,7 @@ class CSPDiffusion(BaseModule):
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
 
+        print("yaa")
         """output_dict = self(batch)
 
         log_dict, val_loss = self.compute_stats(output_dict, prefix='val')
@@ -275,8 +276,7 @@ class CSPDiffusion(BaseModule):
         output_dict = self(batch)
         log_dict, val_loss = self.compute_stats(output_dict, prefix='val')
         self.log(
-            'val_loss',
-            val_loss,
+            log_dict,
             on_epoch=True, 
             prog_bar=True,
             logger=True) 
