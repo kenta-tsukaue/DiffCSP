@@ -275,11 +275,12 @@ class CSPDiffusion(BaseModule):
         
         output_dict = self(batch)
         log_dict, val_loss = self.compute_stats(output_dict, prefix='val')
-        self.log(
+        self.log_dict(
             log_dict,
-            on_epoch=True, 
+            on_step=False,
+            on_epoch=True,
             prog_bar=True,
-            logger=True) 
+        )
         return {'val_loss': val_loss}
 
 
