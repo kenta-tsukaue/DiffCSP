@@ -256,7 +256,7 @@ class CSPDiffusion(BaseModule):
         if loss.isnan():
             return None
 
-        return loss
+        return {'loss': loss,}
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
 
@@ -302,5 +302,8 @@ class CSPDiffusion(BaseModule):
         }
 
         return log_dict, loss
+    
+    def training_epoch_end(self, outputs):
+        return {"val_loss": 1}
 
     
