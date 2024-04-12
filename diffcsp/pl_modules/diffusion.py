@@ -36,15 +36,19 @@ class BaseModule(pl.LightningModule):
             self._hparams = self.hparams.model
 
     def configure_optimizers(self):
-        opt = hydra.utils.instantiate(
-            self.hparams.optim.optimizer, params=self.parameters(), _convert_="partial"
-        )
-        if not self.hparams.optim.use_lr_scheduler:
-            return [opt]
-        scheduler = hydra.utils.instantiate(
-            self.hparams.optim.lr_scheduler, optimizer=opt
-        )
-        return {"optimizer": opt, "lr_scheduler": scheduler}
+        optimizer = hydra.utils.instantiate(self.hparams.optim)  # YAMLからオプティマイザ設定を読み込み
+
+        if self.hparams.use_lr_scheduler:
+            scheduler = hydra.utils.instantiate(self.hparams.lr_scheduler, optimizer=optimizer)
+            scheduler_config = {
+                'scheduler': scheduler,
+                'monitor': 'val_loss',  # ReduceLROnPlateauが監視するメトリック
+                'interval': 'epoch',
+                'frequency': 1
+            }
+            return [optimizer], [scheduler_config]
+        else:
+            return optimizer
 
 
 ### Model definition
