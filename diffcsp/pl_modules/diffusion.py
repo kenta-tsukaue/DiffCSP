@@ -275,7 +275,8 @@ class CSPDiffusion(BaseModule):
         output_dict = self(batch)
         log_dict, val_loss = self.compute_stats(output_dict, prefix='val')
         self.log(
-            {'val_loss':val_loss} ,
+            'val_loss',
+            val_loss,
             on_epoch=True, 
             prog_bar=True,
             logger=True) 
