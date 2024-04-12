@@ -258,7 +258,7 @@ class CSPDiffusion(BaseModule):
 
         output_dict = self(batch)
 
-        log_dict, loss = self.compute_stats(output_dict, prefix='val')
+        log_dict, val_loss = self.compute_stats(output_dict, prefix='val')
 
         self.log_dict(
             log_dict,
@@ -266,7 +266,7 @@ class CSPDiffusion(BaseModule):
             on_epoch=True,
             prog_bar=True,
         )
-        return loss
+        return val_loss
 
     def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
 
