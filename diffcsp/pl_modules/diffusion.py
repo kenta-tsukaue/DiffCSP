@@ -36,7 +36,7 @@ class BaseModule(pl.LightningModule):
             self._hparams = self.hparams.model
 
     def configure_optimizers(self):
-        """opt = hydra.utils.instantiate(
+        opt = hydra.utils.instantiate(
             self.hparams.optim.optimizer, params=self.parameters(), _convert_="partial"
         )
         if not self.hparams.optim.use_lr_scheduler:
@@ -44,15 +44,7 @@ class BaseModule(pl.LightningModule):
         scheduler = hydra.utils.instantiate(
             self.hparams.optim.lr_scheduler, optimizer=opt
         )
-        return {"optimizer": opt, "lr_scheduler": scheduler}"""
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        scheduler = {
-            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.1),
-            'monitor': 'val_loss',  # 監視するメトリックを指定
-            'interval': 'epoch',
-            'frequency': 1
-        }
-        return [optimizer], [scheduler]
+        return {"optimizer": opt, "lr_scheduler": scheduler}
 
 
 ### Model definition
