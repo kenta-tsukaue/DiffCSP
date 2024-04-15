@@ -86,8 +86,8 @@ class CSPDiffusion(BaseModule):
         print("================[batch.y]===============\n",batch.y)
         print("================[batch.frac_coords]===============\n",batch.frac_coords)
         print("================[batch.atom_types]===============\n",batch.atom_types)
-        for i in range(batch.atom_types):
-            print(i)
+        for i in range(len(batch.atom_types)):
+            print(batch.atom_types[i])
         print("================[batch.lengths]===============\n",batch.lengths)
         print("================[batch.angles]===============\n",batch.angles)
         print("================[batch.to_jimages]===============\n",batch.to_jimages)
