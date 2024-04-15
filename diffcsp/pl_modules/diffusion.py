@@ -83,6 +83,8 @@ class CSPDiffusion(BaseModule):
 
     def forward(self, batch):
 
+        print(batch)
+
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
         time_emb = self.time_embedding(times)
