@@ -30,6 +30,7 @@ def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
+    print("==================[p_wrapped_normal] p_ ===============",p_)
     return p_
 
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
