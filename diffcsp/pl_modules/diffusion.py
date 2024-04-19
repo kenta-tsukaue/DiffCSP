@@ -82,6 +82,7 @@ class CSPDiffusion(BaseModule):
         self.keep_coords = self.hparams.cost_coord < 1e-5
 
     def forward(self, batch):
+        """
         print(batch)
         print("================[batch.y]===============\n",batch.y)
         print("================[batch.frac_coords]===============\n",batch.frac_coords)
@@ -94,7 +95,7 @@ class CSPDiffusion(BaseModule):
         print("================[batch.num_atoms]===============\n",batch.num_atoms)
         print("================[batch.num_bonds]===============\n",batch.num_bonds)
         print("================[batch.num_nodes]===============\n",batch.num_nodes)
-
+        """
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
         time_emb = self.time_embedding(times)
@@ -116,7 +117,7 @@ class CSPDiffusion(BaseModule):
         input_lattice = c0[:, None, None] * lattices + c1[:, None, None] * rand_l
         sigmas_per_atom = sigmas.repeat_interleave(batch.num_atoms)[:, None]
         sigmas_norm_per_atom = sigmas_norm.repeat_interleave(batch.num_atoms)[:, None]
-        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
+        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) #% 1. 一旦ここを無くしてみる
 
 
         if self.keep_coords:
