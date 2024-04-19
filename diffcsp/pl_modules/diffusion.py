@@ -117,7 +117,7 @@ class CSPDiffusion(BaseModule):
         input_lattice = c0[:, None, None] * lattices + c1[:, None, None] * rand_l
         sigmas_per_atom = sigmas.repeat_interleave(batch.num_atoms)[:, None]
         sigmas_norm_per_atom = sigmas_norm.repeat_interleave(batch.num_atoms)[:, None]
-        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1. #一旦ここを無くしてみる
+        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
 
         if self.keep_coords:
