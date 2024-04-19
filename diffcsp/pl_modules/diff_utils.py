@@ -36,6 +36,7 @@ def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(1):#本来は-N~N+1
         p_ += (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
+    print("==================p_===============",p_)
     return p_ / p_wrapped_normal(x, sigma, N, T)
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
@@ -43,7 +44,6 @@ def sigma_norm(sigma, T=1.0, sn = 10000):
     x_sample = sigma * torch.randn_like(sigmas)
     x_sample = x_sample % T
     normal_ = d_log_p_wrapped_normal(x_sample, sigmas, T = T)
-    print(normal)
     return (normal_ ** 2).mean(dim = 0)
 
 
