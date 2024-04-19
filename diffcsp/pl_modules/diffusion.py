@@ -130,7 +130,7 @@ class CSPDiffusion(BaseModule):
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
-        print("=================tar_x================",tar_x)
+        print("=================tar_x================",tar_x.size(), tar_x)
 
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)
