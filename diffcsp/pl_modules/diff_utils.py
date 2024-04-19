@@ -28,7 +28,7 @@ def sigmoid_beta_schedule(timesteps, beta_start, beta_end):
 
 def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
-    for i in range(1):#本来は-N~N+1
+    for i in range(1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
     return p_
 
@@ -43,6 +43,7 @@ def sigma_norm(sigma, T=1.0, sn = 10000):
     x_sample = sigma * torch.randn_like(sigmas)
     x_sample = x_sample % T
     normal_ = d_log_p_wrapped_normal(x_sample, sigmas, T = T)
+    print(normal)
     return (normal_ ** 2).mean(dim = 0)
 
 
