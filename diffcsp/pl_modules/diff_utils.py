@@ -47,6 +47,7 @@ def sigma_norm(sigma, T=1.0, sn = 10000):
     x_sample = sigma * torch.randn_like(sigmas)
     x_sample = x_sample % T
     normal_ = d_log_p_wrapped_normal(x_sample, sigmas, T = T)
+    print("==================normal_===============",normal_.size(), normal_)
     return (normal_ ** 2).mean(dim = 0)
 
 
