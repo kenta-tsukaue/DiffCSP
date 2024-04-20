@@ -98,7 +98,7 @@ class CSPDiffusion(BaseModule):
         """
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
-        print("=================times================",times.size(), times)
+        #print("=================times================",times.size(), times)
 
         time_emb = self.time_embedding(times)
 
@@ -110,8 +110,8 @@ class CSPDiffusion(BaseModule):
 
         sigmas = self.sigma_scheduler.sigmas[times]
         sigmas_norm = self.sigma_scheduler.sigmas_norm[times]
-        print("=================sigmas_norm================",sigmas_norm.size(), sigmas_norm)
-        print("=================torch.sqrt(sigmas_norm)================",(torch.sqrt(sigmas_norm)).size(), torch.sqrt(sigmas_norm))
+        #print("=================sigmas_norm================",sigmas_norm.size(), sigmas_norm)
+        #print("=================torch.sqrt(sigmas_norm)================",(torch.sqrt(sigmas_norm)).size(), torch.sqrt(sigmas_norm))
 
         lattices = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
         frac_coords = batch.frac_coords
@@ -134,8 +134,8 @@ class CSPDiffusion(BaseModule):
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
-        print("=================torch.sqrt(sigmas_norm_per_atom)================",(torch.sqrt(sigmas_norm_per_atom)).size(), torch.sqrt(sigmas_norm_per_atom))
-        print("=================tar_x================",tar_x.size(), tar_x)
+        #print("=================torch.sqrt(sigmas_norm_per_atom)================",(torch.sqrt(sigmas_norm_per_atom)).size(), torch.sqrt(sigmas_norm_per_atom))
+        #print("=================tar_x================",tar_x.size(), tar_x)
 
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)

@@ -42,12 +42,12 @@ def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     return p_ / p_wrapped_normal(x, sigma, N, T)
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
-    print("==========kokodaaaaaa========")
+    #print("==========kokodaaaaaa========")
     sigmas = sigma[None, :].repeat(sn, 1)
     x_sample = sigma * torch.randn_like(sigmas)
     x_sample = x_sample % T
     normal_ = d_log_p_wrapped_normal(x_sample, sigmas, T = T)
-    print("==================normal_===============",normal_.size(), normal_)
+    #print("==================normal_===============",normal_.size(), normal_)
     return (normal_ ** 2).mean(dim = 0)
 
 
