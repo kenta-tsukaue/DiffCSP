@@ -110,6 +110,7 @@ class CSPDiffusion(BaseModule):
 
         sigmas = self.sigma_scheduler.sigmas[times]
         sigmas_norm = self.sigma_scheduler.sigmas_norm[times]
+        print("=================sigmas_norm================",sigmas_norm.size(), sigmas_norm)
         print("=================torch.sqrt(sigmas_norm)================",(torch.sqrt(sigmas_norm)).size(), torch.sqrt(sigmas_norm))
 
         lattices = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
