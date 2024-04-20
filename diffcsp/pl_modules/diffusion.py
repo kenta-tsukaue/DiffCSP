@@ -98,6 +98,8 @@ class CSPDiffusion(BaseModule):
         """
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
+        print("=================times================",times.size(), times)
+
         time_emb = self.time_embedding(times)
 
         alphas_cumprod = self.beta_scheduler.alphas_cumprod[times]
