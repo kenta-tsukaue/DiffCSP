@@ -100,6 +100,7 @@ class CSPDiffusion(BaseModule):
         
         torch.save(batch, 'batch.pt')
         print("保存完了")
+        exit()
 
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
