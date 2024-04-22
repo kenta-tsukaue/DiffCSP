@@ -96,6 +96,9 @@ class CSPDiffusion(BaseModule):
         print("================[batch.num_bonds]===============\n",batch.num_bonds)
         print("================[batch.num_nodes]===============\n",batch.num_nodes)
         """
+
+        torch.save(batch, 'batch.pt')
+        
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
         #print("=================times================",times.size(), times)
