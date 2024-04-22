@@ -102,11 +102,36 @@ def run(cfg: DictConfig) -> None:
         cfg.data.datamodule, _recursive_=False
     )
 
+    # Instantiate model
+    hydra.utils.log.info(f"Instantiating <{cfg.model._target_}>")
+    model: pl.LightningModule = hydra.utils.instantiate(
+        cfg.model,
+        optim=cfg.optim,
+        data=cfg.data,
+        logging=cfg.logging,
+        _recursive_=False,
+    )
+
+    # Pass scaler from datamodule to model
+    hydra.utils.log.info(f"Passing scaler from datamodule to model <{datamodule.scaler}>")
+    if datamodule.scaler is not None:
+        model.lattice_scaler = datamodule.lattice_scaler.copy()
+        model.scaler = datamodule.scaler.copy()
+        # 確認したいディレクトリのパス
+    directory_path = hydra_dir / 'lattice_scaler.pt'
+
+    # ディレクトリが存在しない場合は作成する
+    if not os.path.exists(directory_path.parent):
+        os.makedirs(directory_path.parent)
+    torch.save(datamodule.lattice_scaler, hydra_dir / 'lattice_scaler.pt')
+    torch.save(datamodule.scaler, hydra_dir / 'prop_scaler.pt')
+    # Instantiate the callbacks
+
     print(datamodule)
 
-    #train_dataloader = datamodule.train_dataloader()
+    train_dataloader = datamodule.train_dataloader()
 
-    #print(train_dataloader)
+    print(train_dataloader)
     
 
 
