@@ -102,9 +102,11 @@ def run(cfg: DictConfig) -> None:
         cfg.data.datamodule, _recursive_=False
     )
 
-    train_dataloader = datamodule.train_dataloader()
+    print(datamodule)
 
-    print(train_dataloader)
+    #train_dataloader = datamodule.train_dataloader()
+
+    #print(train_dataloader)
     
 
 
