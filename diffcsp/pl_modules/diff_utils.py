@@ -25,19 +25,19 @@ def sigmoid_beta_schedule(timesteps, beta_start, beta_end):
     betas = torch.linspace(-6, 6, timesteps)
     return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
 
-"""
+
 def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(-N, N+1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
 
-    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)"""
+    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)
 
-def p_wrapped_normal(x, sigma, N=10, T=1.0):
+"""def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = torch.zeros_like(x[:, 0])  # Initialize to zero with the same size as x's batch dimension
     for i in range(-N, N+1):
         p_ += torch.exp(-torch.sum((x + T * i) ** 2, dim=1) / (2 * sigma ** 2))
-    return p_
+    return p_"""
 
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
