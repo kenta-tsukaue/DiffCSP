@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
+from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal
 
 MAX_ATOMIC_NUM=100
 
@@ -96,7 +96,6 @@ class CSPDiffusion(BaseModule):
         print("================[batch.num_bonds]===============\n",batch.num_bonds)
         print("================[batch.num_nodes]===============\n",batch.num_nodes)
         """
-        
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
 
@@ -132,6 +131,9 @@ class CSPDiffusion(BaseModule):
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
+        tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
+        print("==============[tar_x_d2]==============\n", tar_x_d2.size(), tar_x_d2)
+        print("")
 
 
         loss_lattice = F.mse_loss(pred_l, rand_l)

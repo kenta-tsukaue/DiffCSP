@@ -28,29 +28,44 @@ def sigmoid_beta_schedule(timesteps, beta_start, beta_end):
 
 def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
-    for i in range(1):
+    for i in range(-N, N+1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
-    #print("==================[p_wrapped_normal] p_ ===============",p_.size(), p_)
-    return p_ + 1e-10  # 小さな値を加える(従来はこの足し算はなかった)
+
+    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)
 
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
-    for i in range(1):#本来は-N~N+1
+    for i in range(-N, N+1):
         p_ += (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
-    #print("==================return===============",(p_ / p_wrapped_normal(x, sigma, N, T)).size(), p_ / p_wrapped_normal(x, sigma, N, T))
 
     return p_ / p_wrapped_normal(x, sigma, N, T)
 
+def d_p_wrapped_normal(x, sigma, N=10, T=1.0):
+    dp_ = torch.tensor(0.0)
+    for i in range(-N, N+1):
+        dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return dp_
+
+def d2_p_wrapped_normal(x, sigma, N=10, T=1.0):
+    d2p_ = torch.tensor(0.0)
+    for i in range(-N, N+1):
+        d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return d2p_
+
+def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
+    x = torch.tensor(x, requires_grad=False)
+    p = p_wrapped_normal(x, sigma, N, T)
+    dp = d_p_wrapped_normal(x, sigma, N, T)
+    d2p = d2_p_wrapped_normal(x, sigma, N, T)
+    d2_log_p = (d2p * p - dp**2) / p**2
+    return d2_log_p.item()
+
 def sigma_norm(sigma, T=1.0, sn = 10000):
-    #print("==========kokodaaaaaa========")
     sigmas = sigma[None, :].repeat(sn, 1)
     x_sample = sigma * torch.randn_like(sigmas)
     x_sample = x_sample % T
     normal_ = d_log_p_wrapped_normal(x_sample, sigmas, T = T)
-    #print("==================normal_===============",normal_.size(), normal_)
     return (normal_ ** 2).mean(dim = 0)
-
-
 
 
 class BetaScheduler(nn.Module):
