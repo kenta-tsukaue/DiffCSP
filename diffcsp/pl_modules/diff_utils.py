@@ -56,9 +56,9 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p = p_wrapped_normal(x, sigma, N, T)
     print("p.size()",p.size())
     dp = d_p_wrapped_normal(x, sigma, N, T)
-    print("d_p_wrapped_normal.size()",d_p_wrapped_normal.size())
+    print("dp.size()",dp.size())
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
-    print("d2_p_wrapped_normal.size()", d2_p_wrapped_normal.size())
+    print("d2p.size()", d2p.size())
     d2_log_p = (d2p * p - dp**2) / p**2
     return d2_log_p
 
