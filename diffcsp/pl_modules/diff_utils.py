@@ -41,13 +41,13 @@ def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     return p_ / p_wrapped_normal(x, sigma, N, T)
 
 def d_p_wrapped_normal(x, sigma, N=10, T=1.0):
-    dp_ = torch.tensor(0.0)
+    dp_ = 0
     for i in range(-N, N+1):
         dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return dp_
 
 def d2_p_wrapped_normal(x, sigma, N=10, T=1.0):
-    d2p_ = torch.tensor(0.0)
+    d2p_ = 0
     for i in range(-N, N+1):
         d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return d2p_
