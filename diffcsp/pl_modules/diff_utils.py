@@ -41,27 +41,24 @@ def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     return p_ / p_wrapped_normal(x, sigma, N, T)
 
 def d_p_wrapped_normal(x, sigma, N=10, T=1.0):
-    dp_ = torch.zeros_like(x)  # Initialize to zero with the same size as x
-    p_ = p_wrapped_normal(x, sigma, N, T).unsqueeze(-1)  # p(x) for each sample
+    dp_ = torch.zeros_like(x)
     for i in range(-N, N+1):
-        component = torch.exp(-((x + T * i) ** 2) / (2 * sigma ** 2))
-        dp_ += (-(x + T * i) / (sigma ** 2)) * component
-    return dp_ / p_
+        dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return dp_
 
 def d2_p_wrapped_normal(x, sigma, N=10, T=1.0):
-    d2p_ = torch.zeros_like(x)  # Initialize to zero with the same size as x
-    p_ = p_wrapped_normal(x, sigma, N, T).unsqueeze(-1)  # p(x) for each sample
+    d2p_ = torch.zeros_like(x)
     for i in range(-N, N+1):
-        component = torch.exp(-((x + T * i) ** 2) / (2 * sigma ** 2))
-        d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * component
-    return d2p_ / p_
+        d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return d2p_
 
 def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p = p_wrapped_normal(x, sigma, N, T)
     dp = d_p_wrapped_normal(x, sigma, N, T)
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
-    d2_log_p = (d2p * p.unsqueeze(-1) - dp**2) / p.unsqueeze(-1)**2
+    d2_log_p = (d2p * p - dp**2) / p**2
     return d2_log_p
+
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
     sigmas = sigma[None, :].repeat(sn, 1)
