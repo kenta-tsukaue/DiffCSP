@@ -131,9 +131,9 @@ class CSPDiffusion(BaseModule):
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
-        print("==============[tar_x]==============\n", tar_x.size(),"\n" tar_x)
+        print("==============[tar_x]==============\n", tar_x.size(),"\n", tar_x)
         tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
-        print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n" tar_x_d2)
+        print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n", tar_x_d2)
         print("")
 
 
