@@ -25,13 +25,19 @@ def sigmoid_beta_schedule(timesteps, beta_start, beta_end):
     betas = torch.linspace(-6, 6, timesteps)
     return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
 
-
+"""
 def p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(-N, N+1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
 
-    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)
+    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)"""
+
+def p_wrapped_normal(x, sigma, N=10, T=1.0):
+    p_ = torch.zeros_like(x[:, 0])  # Initialize to zero with the same size as x's batch dimension
+    for i in range(-N, N+1):
+        p_ += torch.exp(-torch.sum((x + T * i) ** 2, dim=1) / (2 * sigma ** 2))
+    return p_
 
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
@@ -43,22 +49,23 @@ def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
 def d_p_wrapped_normal(x, sigma, N=10, T=1.0):
     dp_ = torch.zeros_like(x)  # Initialize to zero with the same size as x
     for i in range(-N, N+1):
-        dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-torch.sum((x + T * i) ** 2, dim=1) / (2 * sigma ** 2)).unsqueeze(1)
+        exp_component = torch.exp(-torch.sum((x + T * i) ** 2, dim=1) / (2 * sigma ** 2))
+        dp_ += (-(x + T * i) / (sigma ** 2)) * exp_component.unsqueeze(-1)  # Ensure correct broadcasting
     return dp_
 
 def d2_p_wrapped_normal(x, sigma, N=10, T=1.0):
     d2p_ = torch.zeros_like(x)  # Initialize to zero with the same size as x
     for i in range(-N, N+1):
         vec = x + T * i
-        term = torch.exp(-torch.sum(vec ** 2, dim=1) / (2 * sigma ** 2)).unsqueeze(1)
-        d2p_ += ((vec**2 / (sigma**4)) - (1 / (sigma**2))) * term
+        exp_component = torch.exp(-torch.sum(vec ** 2, dim=1) / (2 * sigma ** 2))
+        d2p_ += ((vec**2 / (sigma**4)) - (1 / (sigma**2))) * exp_component.unsqueeze(-1)  # Correct broadcasting
     return d2p_
 
 def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p = p_wrapped_normal(x, sigma, N, T)
     dp = d_p_wrapped_normal(x, sigma, N, T)
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
-    d2_log_p = (d2p * p.unsqueeze(1) - dp**2) / p.unsqueeze(1)**2
+    d2_log_p = (d2p * p.unsqueeze(-1) - dp**2) / p.unsqueeze(-1)**2  # Ensure correct broadcasting
     return d2_log_p
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
