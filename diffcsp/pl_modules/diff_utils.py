@@ -58,7 +58,7 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     dp = d_p_wrapped_normal(x, sigma, N, T)
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
     d2_log_p = (d2p * p - dp**2) / p**2
-    return d2_log_p.item()
+    return d2_log_p
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
     sigmas = sigma[None, :].repeat(sn, 1)
