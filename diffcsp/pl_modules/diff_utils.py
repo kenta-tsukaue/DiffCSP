@@ -53,7 +53,7 @@ def d2_p_wrapped_normal(x, sigma, N=10, T=1.0):
     return d2p_
 
 def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
-    x = torch.tensor(x, requires_grad=False)
+    #x = torch.tensor(x, requires_grad=False)
     p = p_wrapped_normal(x, sigma, N, T)
     dp = d_p_wrapped_normal(x, sigma, N, T)
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
