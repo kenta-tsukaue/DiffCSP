@@ -265,16 +265,16 @@ class CSPDiffusion(BaseModule):
         output_dict = self(batch)
 
         loss_lattice = output_dict['loss_lattice']
-        loss_lattice_d2 = output_dict['loss_lattice_d2']
         loss_coord = output_dict['loss_coord']
+        loss_coord_d2 = output_dict['loss_coord_d2']
         loss = output_dict['loss']
 
 
         self.log_dict(
             {'train_loss': loss,
             'lattice_loss': loss_lattice,
-            'lattice_d2_loss': loss_lattice_d2,
-            'coord_loss': loss_coord},
+            'coord_loss': loss_coord,
+            'coord_d2_loss': loss_coord_d2},
             on_step=True,
             on_epoch=True,
             prog_bar=True,
