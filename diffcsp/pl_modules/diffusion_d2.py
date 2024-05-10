@@ -318,12 +318,14 @@ class CSPDiffusion(BaseModule):
 
         loss_lattice = output_dict['loss_lattice']
         loss_coord = output_dict['loss_coord']
+        loss_coord_d2 = output_dict['loss_coord_d2']
         loss = output_dict['loss']
 
         log_dict = {
             f'{prefix}_loss': loss,
             f'{prefix}_lattice_loss': loss_lattice,
-            f'{prefix}_coord_loss': loss_coord
+            f'{prefix}_coord_loss': loss_coord,
+            f'{prefix}_coord_d2_loss': loss_coord_d2
         }
 
         return log_dict, loss
