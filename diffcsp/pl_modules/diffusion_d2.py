@@ -134,14 +134,14 @@ class CSPDiffusion(BaseModule):
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
         #print("==============[tar_x]==============\n", tar_x.size(),"\n", tar_x)
-        tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
+        tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom) + tar_x**2
         #print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n", tar_x_d2)
 
 
 
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)
-        loss_coord_d2 = F.mse_loss(pred_x_d2, tar_x_d2)
+        loss_coord_d2 = F.mse_loss(pred_x_d2 + pred_x**2, tar_x_d2)
 
         loss = (
             self.hparams.cost_lattice * loss_lattice +
@@ -216,7 +216,7 @@ class CSPDiffusion(BaseModule):
             # step_size = step_lr / (sigma_norm * (self.sigma_scheduler.sigma_begin) ** 2)
             std_x = torch.sqrt(2 * step_size)
 
-            pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch)
+            pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #スコア算出
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
