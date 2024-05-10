@@ -133,9 +133,9 @@ class CSPDiffusion(BaseModule):
         _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
-        print("==============[tar_x]==============\n", tar_x.size(),"\n", tar_x)
+        #print("==============[tar_x]==============\n", tar_x.size(),"\n", tar_x)
         tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
-        print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n", tar_x_d2)
+        #print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n", tar_x_d2)
 
 
 
@@ -265,6 +265,7 @@ class CSPDiffusion(BaseModule):
         output_dict = self(batch)
 
         loss_lattice = output_dict['loss_lattice']
+        loss_lattice_d2 = output_dict['loss_lattice_d2']
         loss_coord = output_dict['loss_coord']
         loss = output_dict['loss']
 
@@ -272,6 +273,7 @@ class CSPDiffusion(BaseModule):
         self.log_dict(
             {'train_loss': loss,
             'lattice_loss': loss_lattice,
+            'lattice_d2_loss': loss_lattice_d2,
             'coord_loss': loss_coord},
             on_step=True,
             on_epoch=True,
