@@ -74,6 +74,7 @@ class CSPDiffusion(BaseModule):
         super().__init__(*args, **kwargs)
         
         self.decoder = hydra.utils.instantiate(self.hparams.decoder, latent_dim = self.hparams.latent_dim + self.hparams.time_dim, _recursive_=False)
+        self.decoder_d2 = hydra.utils.instantiate(self.hparams.decoder, latent_dim = self.hparams.latent_dim + self.hparams.time_dim, _recursive_=False)
         self.beta_scheduler = hydra.utils.instantiate(self.hparams.beta_scheduler)
         self.sigma_scheduler = hydra.utils.instantiate(self.hparams.sigma_scheduler)
         self.time_dim = self.hparams.time_dim
@@ -129,25 +130,29 @@ class CSPDiffusion(BaseModule):
             input_lattice = lattices
 
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
         print("==============[tar_x]==============\n", tar_x.size(),"\n", tar_x)
         tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
         print("==============[tar_x_d2]==============\n", tar_x_d2.size(),"\n", tar_x_d2)
-        print("")
+
 
 
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)
+        loss_coord_d2 = F.mse_loss(pred_x_d2, tar_x_d2)
 
         loss = (
             self.hparams.cost_lattice * loss_lattice +
-            self.hparams.cost_coord * loss_coord)
+            self.hparams.cost_coord * loss_coord + 
+            self.hparams.cost_coord_d2 * loss_coord_d2)
 
         return {
             'loss' : loss,
             'loss_lattice' : loss_lattice,
-            'loss_coord' : loss_coord
+            'loss_coord' : loss_coord,
+            'loss_coord_d2' : loss_coord_d2
         }
 
     @torch.no_grad()

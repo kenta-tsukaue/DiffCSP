@@ -31,14 +31,14 @@ def p_wrapped_normal(x, sigma, N=10, T=1.0):
     for i in range(-N, N+1):
         p_ += torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
 
-    return p_ #+ 1e-10  # 小さな値を加える(従来はこの足し算はなかった)
+    return p_ # p_.size() torch.Size([2362, 3])
 
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(-N, N+1):
         p_ += (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / 2 / sigma ** 2)
 
-    return p_ / p_wrapped_normal(x, sigma, N, T)
+    return p_ / p_wrapped_normal(x, sigma, N, T) #size() torch.Size([2362, 3])
 
 def d_p_wrapped_normal(x, sigma, N=10, T=1.0):
     dp_ = torch.zeros_like(x)
