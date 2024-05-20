@@ -158,10 +158,16 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     return b_n
 
 def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
+    x_t.requires_grad_()
+    sigma.requires_grad_()
+    target1.requires_grad_()
+    target2.requires_grad_()
+    
     m = Variable(torch.randn(x_t.shape), requires_grad=True)
     c = Variable(torch.randn(x_t.shape), requires_grad=True)
 
     optimizer = torch.optim.Adam([m, c], lr=lr)
+
 
     # a_n_values と b_n_values の勾配設定を確認
     a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1)
