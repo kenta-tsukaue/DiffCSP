@@ -201,9 +201,9 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
         sum_expr_2 = b_n_values[0]/2 + torch.sum(b_n_values[1:] * torch.cos(2 * torch.pi * torch.arange(1, 6).view(-1, 1, 1) * m) * torch.exp(-(2 * torch.pi * torch.arange(1, 6).view(-1, 1, 1))**2 * c / 2), dim=0)
         
         print(sum_expr_1.size())
+        print(sum_expr_1)
         print(sum_expr_2.size())
-        print(target1.size())
-        print(target2.size())
+        print(sum_expr_2)
 
         # 損失関数
         loss = (sum_expr_1 - target1)**2 + (sum_expr_2 - target2)**2
