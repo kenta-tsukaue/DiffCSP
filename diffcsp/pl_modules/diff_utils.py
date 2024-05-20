@@ -119,7 +119,7 @@ def d2_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
 # フーリエ係数の計算関数(an)
 def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
     # 積分区間 [0, T] を num_points 個の点で離散化
-    x = torch.linspace(0, T, num_points)
+    x = torch.linspace(0, T, num_points, requires_grad=True)
     dx = T / num_points
     
     # 導関数を評価
@@ -135,7 +135,7 @@ def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
 
 def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     # 積分区間 [0, T] を num_points 個の点で離散化
-    x = torch.linspace(0, T, num_points)
+    x = torch.linspace(0, T, num_points, requires_grad=True)
     dx = T / num_points
     
     # 導関数を評価
