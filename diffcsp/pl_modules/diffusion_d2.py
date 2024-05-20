@@ -220,7 +220,7 @@ class CSPDiffusion(BaseModule):
             _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #二次スコア算出
 
             #この2次スコアを用いてまずはmとcを求める
-            m, c = optimize_mc(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
+            #m, c = optimize_mc(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
 
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
