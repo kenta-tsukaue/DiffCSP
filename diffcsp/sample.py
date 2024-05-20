@@ -131,16 +131,7 @@ def run(cfg: DictConfig) -> None:
     yaml_conf: str = OmegaConf.to_yaml(cfg=cfg)
     (hydra_dir / "hparams.yaml").write_text(yaml_conf)
 
-    # Load checkpoint (if exist)
-    ckpts = list(hydra_dir.glob('*.ckpt'))
-    if len(ckpts) > 0:
-        ckpt_epochs = np.array([int(ckpt.parts[-1].split('-')[0].split('=')[1]) for ckpt in ckpts])
-        ckpt = str(ckpts[ckpt_epochs.argsort()[-1]])
-        hydra.utils.log.info(f"found checkpoint: {ckpt}")
-    else:
-        ckpt = None
-
-    print(ckpt)
+    ckpt = "/home/tsukaue/code/DiffCSP/hydra/singlerun/2024-05-12/test_d2_3/epoch%3D3619-step%3D86880.ckpt"
 
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint)
