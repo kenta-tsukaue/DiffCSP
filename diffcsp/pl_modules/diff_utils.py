@@ -119,7 +119,7 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     return b_n.item()  # Python の標準数値型に変換
 
 def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
-    print(x_t.size())
+    
     """
     target1: 式1のターゲット値
     target2: 式2のターゲット値
@@ -133,9 +133,11 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     m = Variable(torch.randn(x_t.shape), requires_grad=True)
     c = Variable(torch.randn(x_t.shape), requires_grad=True)
 
+    print(x_t.size())
     print(m.size())
     print(c.size())
-
+    print(sigma.size())
+    print(sigma)
     # オプティマイザー
     optimizer = torch.optim.Adam([m, c], lr=lr)
 
