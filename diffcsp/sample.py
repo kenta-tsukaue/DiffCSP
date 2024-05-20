@@ -140,7 +140,15 @@ def run(cfg: DictConfig) -> None:
     else:
         ckpt = None
 
+    print(ckpt)
+
+    checkpoint = torch.load(ckpt)
+    model.load_state_dict(checkpoint)
+
+    model.eval()
+
     print(model)
+
 
 
 @hydra.main(config_path=str(PROJECT_ROOT / "conf"), config_name="default", version_base="1.1" )
