@@ -77,6 +77,45 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     d2_log_p = (d2p * p - dp**2) / p**2
     return d2_log_p
 
+
+def p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    p_ = torch.zeros_like(x)
+    for i in range(-N, N+1):
+        p_ += torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return p_
+
+def log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    sum_exp = torch.zeros_like(x)
+    for i in range(-N, N+1):
+        sum_exp += torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    log_p = torch.log(sum_exp)
+    return log_p
+
+def d_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    p_ = torch.zeros_like(x)
+    for i in range(-N, N+1):
+        p_ += (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return p_ / p_wrapped_normal_sampling(x, sigma, N, T)
+
+def d_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    dp_ = torch.zeros_like(x)
+    for i in range(-N, N+1):
+        dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return dp_
+
+def d2_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    d2p_ = torch.zeros_like(x)
+    for i in range(-N, N+1):
+        d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+    return d2p_
+
+def d2_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
+    p = p_wrapped_normal_sampling(x, sigma, N, T)
+    dp = d_p_wrapped_normal_sampling(x, sigma, N, T)
+    d2p = d2_p_wrapped_normal_sampling(x, sigma, N, T)
+    d2_log_p = (d2p * p - dp**2) / p**2
+    return d2_log_p
+
 # フーリエ係数の計算関数(an)
 def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
     # 積分区間 [0, T] を num_points 個の点で離散化
@@ -84,7 +123,7 @@ def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
     dx = T / num_points
     
     # 導関数を評価
-    f_x = log_p_wrapped_normal(x, sigma, N, T)
+    f_x = log_p_wrapped_normal_sampling(x, sigma, N, T)
     
     # コサイン成分の計算
     cos_term = torch.cos(2 * torch.pi * n * x)
@@ -100,7 +139,7 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     dx = T / num_points
     
     # 導関数を評価
-    f_x = d_log_p_wrapped_normal(x, sigma, N, T)**2 + d2_log_p_wrapped_normal(x, sigma, N, T)
+    f_x = d_log_p_wrapped_normal_sampling(x, sigma, N, T)**2 + d2_log_p_wrapped_normal_sampling(x, sigma, N, T)
     
     # コサイン成分の計算
     # コサイン成分の計算（n=0 の場合は単に 1）
