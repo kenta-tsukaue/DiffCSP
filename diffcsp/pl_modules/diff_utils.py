@@ -178,8 +178,12 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     # オプティマイザー
     optimizer = torch.optim.Adam([m, c], lr=lr)
     # a_n, b_n の計算
-    a_n_values = torch.tensor([compute_fourier_an(n, sigma) for n in range(1, 6)]).view(-1, 1, 1)
-    b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(0, 6)]).view(-1, 1, 1)
+    #a_n_values = torch.tensor([compute_fourier_an(n, sigma) for n in range(1, 6)]).view(-1, 1, 1)
+    #b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(0, 6)]).view(-1, 1, 1)
+
+    a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1)
+    b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1)
+
 
 
     # 最適化ループ
