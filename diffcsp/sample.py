@@ -18,6 +18,8 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import WandbLogger
 
+from torch.utils.data import DataLoader
+
 from diffcsp.pl_data.datamodule import CrystDataModule
 from diffcsp.pl_modules.cspnet import CSPNet
 print(CrystDataModule)
@@ -139,6 +141,13 @@ def run(cfg: DictConfig) -> None:
     model.eval()
 
     print(datamodule)
+    train_dataloader = datamodule.train_dataloader()
+
+    # 1バッチ分のデータを取得
+    train_batch = next(iter(train_dataloader))
+
+    # 取得したバッチの内容を表示
+    print("Train batch:", train_batch)
 
 
 
