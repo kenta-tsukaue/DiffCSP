@@ -79,34 +79,34 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
 
 
 def p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    p_ = torch.zeros_like(x)
+    p_ = torch.zeros_like(x, requires_grad=True)
     for i in range(-N, N+1):
-        p_ += torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+        p_ = p_ + torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return p_
 
 def log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    sum_exp = torch.zeros_like(x)
+    sum_exp = torch.zeros_like(x, requires_grad=True)
     for i in range(-N, N+1):
-        sum_exp += torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+        sum_exp = sum_exp + torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     log_p = torch.log(sum_exp)
     return log_p
 
 def d_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    p_ = torch.zeros_like(x)
+    p_ = torch.zeros_like(x, requires_grad=True)
     for i in range(-N, N+1):
-        p_ += (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+        p_ = p_ + (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return p_ / p_wrapped_normal_sampling(x, sigma, N, T)
 
 def d_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    dp_ = torch.zeros_like(x)
+    dp_ = torch.zeros_like(x, requires_grad=True)
     for i in range(-N, N+1):
-        dp_ += (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+        dp_ = dp_ + (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return dp_
 
 def d2_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    d2p_ = torch.zeros_like(x)
+    d2p_ = torch.zeros_like(x, requires_grad=True)
     for i in range(-N, N+1):
-        d2p_ += (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+        d2p_ = d2p_ + (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
     return d2p_
 
 def d2_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
