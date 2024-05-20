@@ -159,7 +159,7 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
 
         # a_n, b_n の計算
         a_n_values = torch.tensor([compute_fourier_an(n, sigma) for n in range(1, 6)]).view(-1, 1, 1)  # sigma は仮の値
-        b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(1, 6)]).view(-1, 1, 1)  # sigma は仮の値
+        b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(0, 6)]).view(-1, 1, 1)  # sigma は仮の値
 
         print(a_n_values.size())
         print(b_n_values.size())
