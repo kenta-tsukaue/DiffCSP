@@ -131,7 +131,7 @@ def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
     
     # 係数 a_n の計算
     a_n = 2 * integral  # 0 以外の n に対しては 2 を乗算
-    return a_n.requires_grad_()
+    return a_n
 
 def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     # 積分区間 [0, T] を num_points 個の点で離散化
@@ -155,7 +155,7 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     else:
         b_n = 2 * integral  # 0 以外の n に対しては 2 を乗算
     
-    return b_n.requires_grad_()
+    return b_n
 
 def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     m = Variable(torch.randn(x_t.shape), requires_grad=True)
