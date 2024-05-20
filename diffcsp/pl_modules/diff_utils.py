@@ -133,6 +133,9 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     m = Variable(torch.randn(x_t.shape), requires_grad=True)
     c = Variable(torch.randn(x_t.shape), requires_grad=True)
 
+    print(m.size())
+    print(c.size())
+
     # オプティマイザー
     optimizer = torch.optim.Adam([m, c], lr=lr)
     # a_n, b_n の計算
@@ -152,6 +155,7 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
         print(sum_expr_2.size())
         print(target1.size())
         print(target2.size())
+
         # 損失関数
         loss = (sum_expr_1 - target1)**2 + (sum_expr_2 - target2)**2
         loss = loss.sum()  # 全体の損失を合計
