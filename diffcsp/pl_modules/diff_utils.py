@@ -185,6 +185,10 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1)
 
 
+    print(a_n_values.size())
+    print(a_n_values)
+    print(b_n_values.size())
+    print(b_n_values)
 
     # 最適化ループ
     for _ in range(iterations):
