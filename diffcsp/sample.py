@@ -134,7 +134,7 @@ def run(cfg: DictConfig) -> None:
     ckpt = "/home/tsukaue/code/DiffCSP/hydra/singlerun/2024-05-12/test_d2_3/weight.ckpt"
 
     checkpoint = torch.load(ckpt)
-    model.load_state_dict(checkpoint)
+    model.load_state_dict(checkpoint['state_dict'])
 
     model.eval()
 
