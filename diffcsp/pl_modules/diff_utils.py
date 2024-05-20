@@ -173,7 +173,9 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     c = Variable(torch.randn(x_t.shape), requires_grad=True)
 
     print(m.size())
+    print(m)
     print(c.size())
+    print(c)
 
     # オプティマイザー
     optimizer = torch.optim.Adam([m, c], lr=lr)
