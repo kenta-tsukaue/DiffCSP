@@ -155,7 +155,7 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     else:
         b_n = 2 * integral  # 0 以外の n に対しては 2 を乗算
     
-    return b_n 
+    return b_n
 
 def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     
@@ -183,8 +183,8 @@ def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
     #a_n_values = torch.tensor([compute_fourier_an(n, sigma) for n in range(1, 6)]).view(-1, 1, 1)
     #b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(0, 6)]).view(-1, 1, 1)
 
-    a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1)
-    b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1)
+    a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1).requires_grad_()
+    b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1).requires_grad_()
 
 
     print(a_n_values.size())
