@@ -145,6 +145,7 @@ def run(cfg: DictConfig) -> None:
     test_batch = next(iter(test_dataloader))
     print(test_batch)
 
+    model.sample(test_batch)
 
 
 
