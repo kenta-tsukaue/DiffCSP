@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal
+from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, optimize_mc
 
 MAX_ATOMIC_NUM=100
 
@@ -217,6 +217,11 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt(2 * step_size)
 
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #スコア算出
+            _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #二次スコア算出
+
+            #この2次スコアを用いてまずはmとcを求める
+            m, c = optimize_mc(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
+
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
@@ -234,7 +239,7 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt((adjacent_sigma_x ** 2 * (sigma_x ** 2 - adjacent_sigma_x ** 2)) / (sigma_x ** 2))   
 
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
-
+            
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
             x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t

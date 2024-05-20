@@ -2,7 +2,10 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
+from scipy.integrate import quad
 import math
+from torch.autograd import Variable
+
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
@@ -33,6 +36,18 @@ def p_wrapped_normal(x, sigma, N=10, T=1.0):
 
     return p_ # p_.size() torch.Size([2362, 3])
 
+def log_p_wrapped_normal(x, sigma, N=10, T=1.0):
+    # 総和の初期化
+    sum_exp = 0
+    # 各項を計算して総和を取る
+    for i in range(-N, N+1):
+        sum_exp += torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
+
+    # 対数を取る
+    log_p = torch.log(sum_exp)
+
+    return log_p
+
 def d_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     p_ = 0
     for i in range(-N, N+1):
@@ -62,6 +77,85 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     d2_log_p = (d2p * p - dp**2) / p**2
     return d2_log_p
 
+# フーリエ係数の計算関数(an)
+def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
+    # 積分区間 [0, T] を num_points 個の点で離散化
+    x = torch.linspace(0, T, num_points)
+    dx = T / num_points
+    
+    # 導関数を評価
+    f_x = log_p_wrapped_normal(x, sigma, N, T)
+    
+    # コサイン成分の計算
+    cos_term = torch.cos(2 * torch.pi * n * x)
+    integral = torch.sum(f_x * cos_term) * dx
+    
+    # 係数 a_n の計算
+    a_n = 2 * integral  # 0 以外の n に対しては 2 を乗算
+    return a_n.item()  # Python の標準数値型に変換
+
+def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
+    # 積分区間 [0, T] を num_points 個の点で離散化
+    x = torch.linspace(0, T, num_points)
+    dx = T / num_points
+    
+    # 導関数を評価
+    f_x = d_log_p_wrapped_normal(x, sigma, N, T)**2 + d2_log_p_wrapped_normal(x, sigma, N, T)
+    
+    # コサイン成分の計算
+    # コサイン成分の計算（n=0 の場合は単に 1）
+    if n == 0:
+        cos_term = torch.ones(num_points)  # n=0 の場合、cos(0) = 1
+    else:
+        cos_term = torch.cos(2 * torch.pi * n * x)
+    integral = torch.sum(f_x * cos_term) * dx
+
+    # 係数 b_n の計算（n=0 の場合は係数 1、それ以外は 2）
+    if n == 0:
+        b_n = integral  # n=0 の場合、係数は 1
+    else:
+        b_n = 2 * integral  # 0 以外の n に対しては 2 を乗算
+    
+    return b_n.item()  # Python の標準数値型に変換
+
+def optimize_mc(x_t, sigma, target1, target2, lr=0.01, iterations=1000):
+    """
+    target1: 式1のターゲット値
+    target2: 式2のターゲット値
+    compute_fourier_an: a_n を計算する関数
+    compute_fourier_bn: b_n を計算する関数
+    lr: 学習率
+    iterations: 最適化の反復回数
+    """
+    # 初期値
+     # mとcの初期化
+    m = Variable(torch.randn(x_t.shape), requires_grad=True)
+    c = Variable(torch.randn(x_t.shape), requires_grad=True)
+
+    # オプティマイザー
+    optimizer = torch.optim.Adam([m, c], lr=lr)
+
+    # 最適化ループ
+    for _ in range(iterations):
+        optimizer.zero_grad()
+        
+        # a_n, b_n の計算
+        a_n_values = torch.tensor([compute_fourier_an(n, sigma) for n in range(1, 6)])  # sigma は仮の値
+        b_n_values = torch.tensor([compute_fourier_bn(n, sigma) for n in range(1, 6)])  # sigma は仮の値
+        
+        # 式の計算
+        sum_expr_1 = torch.sum(a_n_values * torch.sin(2 * torch.pi * torch.arange(1, 6).view(-1, 1) * m) * torch.exp(-(2 * torch.pi * torch.arange(1, 6).view(-1, 1))**2 * c / 2), dim=0)
+        sum_expr_2 = b_n_values[0]/2 + torch.sum(b_n_values[1:] * torch.cos(2 * torch.pi * torch.arange(1, 6).view(-1, 1) * m) * torch.exp(-(2 * torch.pi * torch.arange(1, 6).view(-1, 1))**2 * c / 2), dim=0)
+        
+        # 損失関数
+        loss = (sum_expr_1 - target1)**2 + (sum_expr_2 - target2)**2
+        loss = loss.sum()  # 全体の損失を合計
+        
+        # バックプロパゲーション
+        loss.backward()
+        optimizer.step()
+
+    return m.detach(), c.detach()
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
     sigmas = sigma[None, :].repeat(sn, 1)
