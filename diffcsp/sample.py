@@ -142,12 +142,7 @@ def run(cfg: DictConfig) -> None:
 
     print(datamodule)
     train_dataloader = datamodule.train_dataloader()
-
-    # 1バッチ分のデータを取得
-    train_batch = next(iter(train_dataloader))
-
-    # 取得したバッチの内容を表示
-    print("Train batch:", train_batch)
+    print(train_dataloader)
 
 
 
