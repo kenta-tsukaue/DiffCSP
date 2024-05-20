@@ -138,7 +138,8 @@ def run(cfg: DictConfig) -> None:
 
     model.eval()
 
-    print(model)
+    print(datamodule)
+
 
 
 
