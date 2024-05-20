@@ -141,6 +141,7 @@ def run(cfg: DictConfig) -> None:
     model.eval()
 
     print(datamodule)
+    datamodule.setup()
     train_dataloader = datamodule.train_dataloader()
     print(train_dataloader)
 
