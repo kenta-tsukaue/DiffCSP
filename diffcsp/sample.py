@@ -144,6 +144,8 @@ def run(cfg: DictConfig) -> None:
     test_dataloader = datamodule.test_dataloader()[0]
     for batch_idx, batch in enumerate(test_dataloader):
         print(f"Test Batch {batch_idx + 1}: {batch}")
+        if batch_idx == 0:
+            model.sample(batch)
 
 
 
