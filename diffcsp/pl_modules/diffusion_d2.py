@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, optimize_mc
+from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, optimize_mc_scipy, calculate_structure_factors
 
 MAX_ATOMIC_NUM=100
 
@@ -220,7 +220,15 @@ class CSPDiffusion(BaseModule):
             _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #二次スコア算出
 
             #この2次スコアを用いてまずはmとcを求める
-            #m, c = optimize_mc(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
+            m, c = optimize_mc_scipy(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
+            print(m.shape, c.shape)
+
+            print(batch.num_atoms)
+            # S(Q)を求める
+            S_Q = calculate_structure_factors(m, c, batch.num_atoms)
+            print("S_Q", S_Q.shape)
+            print(S_Q)
+
 
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
