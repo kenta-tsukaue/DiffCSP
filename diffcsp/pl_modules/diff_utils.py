@@ -160,6 +160,7 @@ def loss_function(params, x_t, a_n_values, b_n_values, target1, target2):
 
 def optimize_mc_scipy(x_t, sigma, target1, target2, iterations=1000):
     # 初期値の設定
+    x_t = x_t.clone().detach().requires_grad_(True)  # Ensure x_t requires gradient
     initial_m = np.random.randn(*x_t.shape) * 0.1
     initial_c = np.random.randn(*x_t.shape) * 0.1
     initial_params = np.concatenate([initial_m.flatten(), initial_c.flatten()])
@@ -178,11 +179,24 @@ def optimize_mc_scipy(x_t, sigma, target1, target2, iterations=1000):
     optimized_params = result.x
     m_optimized = optimized_params[:x_t.numel()].reshape(x_t.shape)
     c_optimized = optimized_params[x_t.numel():].reshape(x_t.shape)
-    #print(m_optimized, "\n",c_optimized)
 
-    return m_optimized, c_optimized
+    # NumPy 配列を PyTorch テンソルに変換
+    m_optimized = torch.from_numpy(m_optimized).float().requires_grad_(True)
+    c_optimized = torch.from_numpy(c_optimized).float().requires_grad_(True)
 
-def calculate_structure_factors(m, c, num_atoms):
+    # Compute gradients for each element independently
+    m_optimized_grad = torch.zeros_like(m_optimized)
+    c_optimized_grad = torch.zeros_like(c_optimized)
+
+    for i in range(m_optimized.shape[0]):
+        for j in range(m_optimized.shape[1]):
+            # Compute gradient for each component independently
+            m_optimized_grad[i, j] = torch.autograd.grad(outputs=m_optimized[i, j], inputs=x_t, create_graph=True, retain_graph=True)[0]
+            c_optimized_grad[i, j] = torch.autograd.grad(outputs=c_optimized[i, j], inputs=x_t, create_graph=True, retain_graph=True)[0]
+
+    return m_optimized, c_optimized, m_optimized_grad, c_optimized_grad
+
+def calculate_structure_factors(m, c, num_atoms, m_grad, c_grad):
     # Qベクトルの生成
     Q_values = np.array([0, 1, 2, 3, 4])
     Q_combinations = np.array(np.meshgrid(Q_values, Q_values, Q_values)).T.reshape(-1, 3)
@@ -194,6 +208,7 @@ def calculate_structure_factors(m, c, num_atoms):
     
     # 出力の初期化
     structure_factors = np.zeros((num_crystals, 5, 5, 5))
+    derivative_of_SQ = np.zeros_like(structure_factors)  # Initialize the derivative array
     
     # 開始インデックス
     start_index = 0
@@ -202,24 +217,33 @@ def calculate_structure_factors(m, c, num_atoms):
         # 結晶の各原子に対するmとcのサブセット
         m_subset = m[start_index:start_index + num_atom]
         c_subset = c[start_index:start_index + num_atom]
+        m_grad_subset = m_grad[start_index:start_index + num_atom]
+        c_grad_subset = c_grad[start_index:start_index + num_atom]
         
         # 各Qに対する構造因子の計算
         for i, Q in enumerate(Q_combinations):
             sum_SQ = 0
+            sum_dSQ = 0  # Sum for the derivative
             for j in range(num_atom):
                 for k in range(num_atom):
                     term1 = z * np.dot(Q, m_subset[k] - m_subset[j])
                     term2 = -0.5 * np.dot(c_subset[k] + c_subset[j], Q ** 2) 
-                    sum_SQ += np.exp(term1 + term2)
+                    exp_term = np.exp(term1 + term2)
+                    sum_SQ += exp_term
+                    
+                    # Derivative terms
+                    d_term1 = z * np.dot(Q, m_grad_subset[k] - m_grad_subset[j])
+                    d_term2 = -0.5 * np.dot(c_grad_subset[k] + c_grad_subset[j], Q ** 2)
+                    sum_dSQ += exp_term * (d_term1 + d_term2)
             
             # 結果の格納（絶対値を保存）
             structure_factors[crystal_index, i // 25, (i % 25) // 5, (i % 25) % 5] = np.abs(sum_SQ)
-        
+            derivative_of_SQ[crystal_index, i // 25, (i % 25) // 5, (i % 25) % 5] = np.abs(sum_dSQ)
         
         # 次の結晶のためにインデックスを更新
         start_index += num_atom
 
-    return structure_factors
+    return structure_factors, derivative_of_SQ
 
 
 
@@ -294,48 +318,3 @@ class SigmaScheduler(nn.Module):
     def uniform_sample_t(self, batch_size, device):
         ts = np.random.choice(np.arange(1, self.timesteps+1), batch_size)
         return torch.from_numpy(ts).to(device)
-
-
-
-"""def optimize_mc(x_t, sigma, target1, target2, lr=1e-03, iterations=1000):
-    m = Variable(torch.randn(x_t.shape) * 0.1, requires_grad=True)
-    c = Variable(torch.randn(x_t.shape) * 0.1, requires_grad=True)
-
-    optimizer = torch.optim.Adam([m, c], lr=lr)
-
-    for _ in range(iterations):
-        optimizer.zero_grad()
-
-        x = torch.linspace(0, 1, x_t.shape[0], requires_grad=True)  # xも勾配を計算できるようにする
-        a_n_values = torch.stack([compute_fourier_an(n, x, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1)
-        b_n_values = torch.stack([compute_fourier_bn(n, x, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1)
-
-        exp_terms = torch.exp(-(2 * torch.pi * torch.arange(1, 6, dtype=torch.float).view(-1, 1, 1)) ** 2 * c / 2)
-        exp_terms = torch.clamp(exp_terms, min=1e-10, max=1e10)
-
-        sum_expr_1 = torch.sum(a_n_values * torch.sin(2 * torch.pi * torch.arange(1, 6, dtype=torch.float).view(-1, 1, 1) * m) * exp_terms, dim=0)
-        
-        exp_terms_b = torch.exp(-(2 * torch.pi * torch.arange(1, 6, dtype=torch.float).view(-1, 1, 1)) ** 2 * c / 2)
-        exp_terms_b = torch.clamp(exp_terms_b, min=1e-15, max=1e15)
-
-        sum_expr_2 = b_n_values[0] / 2 + torch.sum(b_n_values[1:] * torch.cos(2 * torch.pi * torch.arange(1, 6, dtype=torch.float).view(-1, 1, 1) * m) * exp_terms_b, dim=0)
-
-        loss = (sum_expr_1 - target1) ** 2 + (sum_expr_2 - target2) ** 2
-        loss = loss.sum()
-
-        # Debugging: Check the gradients
-        if loss.grad_fn is None:
-            print("loss has no grad_fn, something went wrong.")
-
-        print(f'Iteration {_+1}/{iterations}, Loss: {loss.item()}')
-
-        loss.backward()
-
-        print(f'm.grad: {m.grad}, c.grad: {c.grad}')
-
-        optimizer.step()
-
-        # Debugging: Check the updated values of m and c
-        print(f'm: {m.data}, c: {c.data}')
-
-    return m.detach(), c.detach()"""

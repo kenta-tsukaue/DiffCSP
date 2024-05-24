@@ -220,14 +220,15 @@ class CSPDiffusion(BaseModule):
             _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #二次スコア算出
 
             #この2次スコアを用いてまずはmとcを求める
-            m, c = optimize_mc_scipy(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
+            m, c, m_grad, c_grad = optimize_mc_scipy(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
             print(m.shape, c.shape)
 
             print(batch.num_atoms)
             # S(Q)を求める
-            S_Q = calculate_structure_factors(m, c, batch.num_atoms)
+            S_Q, dS_Q = calculate_structure_factors(m, c, batch.num_atoms, m_grad, c_grad)
             print("S_Q", S_Q.shape)
-            print(S_Q)
+            print("dS_Q", dS_Q.shape)
+            print(dS_Q)
 
 
 
@@ -344,4 +345,5 @@ class CSPDiffusion(BaseModule):
         return log_dict, loss
     
 
+    
     
