@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, optimize_mc_scipy, calculate_structure_factors
+from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives, dS_Q_dx_t, S_Q, calculate_y, calculate_dy
 
 MAX_ATOMIC_NUM=100
 
@@ -80,7 +80,7 @@ class CSPDiffusion(BaseModule):
         self.time_dim = self.hparams.time_dim
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
         self.keep_lattice = self.hparams.cost_lattice < 1e-5
-        self.keep_coords = self.hparams.cost_coord < 1e-5
+        self.keep_coords = self.hparams.cost_coord < 1e-5,
 
     def forward(self, batch):
         """
@@ -123,12 +123,14 @@ class CSPDiffusion(BaseModule):
         input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
 
+        """
         if self.keep_coords:
             input_frac_coords = frac_coords
 
         if self.keep_lattice:
             input_lattice = lattices
-
+        """
+        
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
         _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
@@ -154,7 +156,7 @@ class CSPDiffusion(BaseModule):
             'loss_coord' : loss_coord,
             'loss_coord_d2' : loss_coord_d2
         }
-
+    
     @torch.no_grad()
     def sample(self, batch, step_lr = 1e-5):
 
@@ -162,11 +164,13 @@ class CSPDiffusion(BaseModule):
 
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)
 
-        if self.keep_coords:
+        """if self.keep_coords:
+            print("keep_coords")
             x_T = batch.frac_coords
 
         if self.keep_lattice:
-            l_T = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
+            print("keep_lattice")
+            l_T = lattice_params_to_matrix_torch(batch.lengths, batch.angles)"""
 
         time_start = self.beta_scheduler.timesteps
 
@@ -198,11 +202,11 @@ class CSPDiffusion(BaseModule):
             x_t = traj[t]['frac_coords']
             l_t = traj[t]['lattices']
 
-            if self.keep_coords:
+            """if self.keep_coords:
                 x_t = x_T
 
             if self.keep_lattice:
-                l_t = l_T
+                l_t = l_T"""
 
             # PC-sampling refers to "Score-Based Generative Modeling through Stochastic Differential Equations"
             # Origin code : https://github.com/yang-song/score_sde/blob/main/sampling.py
@@ -217,26 +221,33 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt(2 * step_size)
 
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #スコア算出
-            _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #二次スコア算出
 
             #この2次スコアを用いてまずはmとcを求める
-            m, c, m_grad, c_grad = optimize_mc_scipy(x_t, sigma_x, pred_x, pred_x_d2 + pred_x ** 2)
-            print(m.shape, c.shape)
+            m, c, dm_dx_t, dc_dx_t = calculate_derivatives(self.decoder, self.decoder_d2, time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch, sigma_x)
 
-            print(batch.num_atoms)
-            # S(Q)を求める
-            S_Q, dS_Q = calculate_structure_factors(m, c, batch.num_atoms, m_grad, c_grad)
-            print("S_Q", S_Q.shape)
-            print("dS_Q", dS_Q.shape)
-            print(dS_Q)
+            # dS(Q)を求める
+            SQ = S_Q(x_t, m, c, batch.num_atoms)
+            d_SQ = dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, batch.num_atoms)
 
+            # yを求める
+            y = calculate_y(batch.num_atoms, batch)
+            #print("SQ", SQ.shape, SQ)
+            #print("d_SQ", d_SQ.shape, d_SQ)
+            #print("y", y.shape, y)
 
+            # dyを求める
+            dy = calculate_dy(d_SQ, y, SQ, batch.num_atoms)
+            #("dy", dy.shape)
+            #print(dy)
 
+            dy = torch.tensor(dy).to('cuda').type(pred_x.dtype)
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
-            x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t
+            x_t_minus_05 = x_t - step_size * ( pred_x + dy ) + std_x * rand_x
+            # x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
+            x_t_minus_05 = x_t_minus_05 % 1.
 
-            l_t_minus_05 = l_t if not self.keep_lattice else l_t
+            l_t_minus_05 = l_t
 
             # Predictor
 
@@ -251,9 +262,9 @@ class CSPDiffusion(BaseModule):
             
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
-            x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t
+            x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x
 
-            l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
+            l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l
 
 
             traj[t - 1] = {
@@ -345,5 +356,6 @@ class CSPDiffusion(BaseModule):
         return log_dict, loss
     
 
+    
     
     

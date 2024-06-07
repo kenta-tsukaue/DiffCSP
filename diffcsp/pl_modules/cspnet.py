@@ -85,7 +85,6 @@ class CSPLayer(nn.Module):
         return out
 
     def forward(self, node_features, frac_coords, lattices, edge_index, edge2graph, frac_diff = None):
-
         node_input = node_features
         if self.ln:
             node_features = self.layer_norm(node_input)
@@ -275,7 +274,6 @@ class CSPNet(nn.Module):
 
         for i in range(0, self.num_layers):
             node_features = self._modules["csp_layer_%d" % i](node_features, frac_coords, lattices, edges, edge2graph, frac_diff = frac_diff)
-
         if self.ln:
             node_features = self.final_layer_norm(node_features)
 

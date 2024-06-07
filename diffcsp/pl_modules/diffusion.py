@@ -78,8 +78,8 @@ class CSPDiffusion(BaseModule):
         self.sigma_scheduler = hydra.utils.instantiate(self.hparams.sigma_scheduler)
         self.time_dim = self.hparams.time_dim
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
-        self.keep_lattice = self.hparams.cost_lattice < 1e-5
-        self.keep_coords = self.hparams.cost_coord < 1e-5
+        self.keep_lattice = False #self.hparams.cost_lattice < 1e-5
+        self.keep_coords = False #self.hparams.cost_coord < 1e-5
 
     def forward(self, batch):
         """
@@ -123,11 +123,11 @@ class CSPDiffusion(BaseModule):
         input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
 
-        if self.keep_coords:
+        """if self.keep_coords:
             input_frac_coords = frac_coords
 
         if self.keep_lattice:
-            input_lattice = lattices
+            input_lattice = lattices"""
 
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
