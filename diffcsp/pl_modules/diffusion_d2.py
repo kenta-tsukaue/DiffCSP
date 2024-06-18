@@ -22,8 +22,8 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives, dS_Q_dx_t, S_Q, calculate_y, calculate_dy
-
+from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives, dS_Q_dx_t, S_Q, calculate_y, calculate_dy, check_sol_2, generate_tables, find_best_fit
+from diffcsp.pl_modules.chksol_1 import check_sol
 MAX_ATOMIC_NUM=100
 
 
@@ -195,7 +195,6 @@ class CSPDiffusion(BaseModule):
             sigma_x = self.sigma_scheduler.sigmas[t]
             sigma_norm = self.sigma_scheduler.sigmas_norm[t]
 
-
             c0 = 1.0 / torch.sqrt(alphas)
             c1 = (1 - alphas) / torch.sqrt(1 - alphas_cumprod)
 
@@ -221,31 +220,42 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt(2 * step_size)
 
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #スコア算出
+            _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch)
 
+            #新しい方法でmとcを求める
+            s1_table, s2_table, m_values, c_values = generate_tables(x_t)
+            m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
+            print("m", m.shape, m)
+            print("c", c.shape, c)
             #この2次スコアを用いてまずはmとcを求める
-            m, c, dm_dx_t, dc_dx_t = calculate_derivatives(self.decoder, self.decoder_d2, time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch, sigma_x)
+            #m, c, dm_dx_t, dc_dx_t = calculate_derivatives(self.decoder, self.decoder_d2, time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch, sigma_x)
+            #sol_1, sol_2 = check_sol(sigma_x, c, m, pred_x, pred_x_d2 + pred_x**2)
 
+            #print("=========================================[デバッグ]=======================================\n")
+            #check_sol_2(m, c, x_t, sigma_x, pred_x, pred_x_d2 + pred_x**2, sol_1, sol_2)
+            #print("=========================================================================================\n")
+            
             # dS(Q)を求める
-            SQ = S_Q(x_t, m, c, batch.num_atoms)
-            d_SQ = dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, batch.num_atoms)
+            #SQ = S_Q(x_t, m, c, batch.num_atoms)
+            #d_SQ = dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, batch.num_atoms)
 
             # yを求める
-            y = calculate_y(batch.num_atoms, batch)
+            #y = calculate_y(batch.num_atoms, batch)
             #print("SQ", SQ.shape, SQ)
             #print("d_SQ", d_SQ.shape, d_SQ)
             #print("y", y.shape, y)
 
             # dyを求める
-            dy = calculate_dy(d_SQ, y, SQ, batch.num_atoms)
+            #dy = calculate_dy(d_SQ, y, SQ, batch.num_atoms)
             #("dy", dy.shape)
             #print(dy)
 
-            dy = torch.tensor(dy).to('cuda').type(pred_x.dtype)
+            #dy = torch.tensor(dy).to('cuda').type(pred_x.dtype)
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
-            x_t_minus_05 = x_t - step_size * ( pred_x + dy ) + std_x * rand_x
-            # x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
-            x_t_minus_05 = x_t_minus_05 % 1.
+            #x_t_minus_05 = x_t - step_size * ( pred_x + dy ) + std_x * rand_x
+            x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
+            x_t_minus_05 = x_t_minus_05
 
             l_t_minus_05 = l_t
 

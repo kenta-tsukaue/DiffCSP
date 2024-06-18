@@ -9,6 +9,9 @@ from scipy.optimize import minimize
 import torch.optim as optim
 import torch.nn.functional as F
 from scipy.misc import derivative
+from diffcsp.pl_modules.chksol_1 import loss_function_sol
+from scipy.special import erf
+from scipy.constants import pi
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
@@ -143,69 +146,17 @@ def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
     b_n = integral if n == 0 else 2 * integral
     return b_n
 
-def loss_function_torch(m, c, x_t, sigma, target1, target2):
-    exp_terms = torch.exp(-(2 * torch.pi * torch.arange(1, 6, dtype=torch.float32, device=x_t.device).view(-1, 1, 1)) ** 2 * c ** 2 / 2)
-    exp_terms = torch.clamp(exp_terms, min=1e-5, max=1e5)
-    a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1).to("cuda")
-    b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1).to("cuda")
-
-    sum_expr_1 = torch.sum(a_n_values * torch.sin(2 * torch.pi * torch.arange(1, 6, dtype=torch.float32, device=x_t.device).view(-1, 1, 1) * m) * exp_terms, dim=0)
-
-    exp_terms_b = torch.exp(-(2 * torch.pi * torch.arange(1, 6, dtype=torch.float32, device=x_t.device).view(-1, 1, 1)) ** 2 * c ** 2 / 2)
-    exp_terms_b = torch.clamp(exp_terms_b, min=1e-5, max=1e5)
-
-    sum_expr_2 = b_n_values[0] / 2 + torch.sum(b_n_values[1:] * torch.cos(2 * torch.pi * torch.arange(1, 6, dtype=torch.float32, device=x_t.device).view(-1, 1, 1) * m) * exp_terms_b, dim=0)
-
-    loss_A = torch.nn.functional.mse_loss(sum_expr_1, target1)
-    loss_B = torch.nn.functional.mse_loss(sum_expr_2, target2)
-    loss = loss_A + loss_B
-
-    return loss
-
-def solve_mc_analytically(x_t, sigma, target1, target2):
-    # ここで解析的に m と c を計算する
-    # 例として、target1 と target2 を使って m と c を計算する方法を示します
-    m = target1 / (2 * torch.pi * sigma)
-    c = torch.sqrt(target2 / (2 * torch.pi * sigma))
-    
-    return m, c
-
-def optimize_mc_torch(x_t, sigma, target1, target2, iterations=10):
-    # Initialize parameters with requires_grad=True
-    #m = torch.randn_like(x_t, requires_grad=True) * 0.01
-    #c = torch.randn_like(x_t, requires_grad=True) * 0.01
-    m, c = solve_mc_analytically(x_t, sigma, target1, target2)
-    m = torch.nn.Parameter(m)  # Make m a leaf tensor
-    c = torch.nn.Parameter(c)  # Make c_log a leaf tensor
-
-    # Set up the optimizer
-    optimizer = optim.Adam([m,c], lr=1e-3)
-
-    for _ in range(iterations):
-        optimizer.zero_grad()
-        # Calculate loss using the modified loss function
-        loss = loss_function_torch(m, c, x_t, sigma, target1, target2)
-        if torch.isnan(loss):
-            print("Loss is nan, skipping backpropagation.")
-            continue
-        # Backpropagation
-        loss.backward(retain_graph=True)
-        # Update parameters
-        optimizer.step()
-
-    return m, c
-
 def loss_function_scipy(params, x_t, a_n_values, b_n_values, target1, target2):
     m = params[:x_t.size].reshape(x_t.shape)
     c = params[x_t.size:].reshape(x_t.shape)
 
     exp_terms = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms = np.clip(exp_terms, 1e-10, 1e10)
+    exp_terms = np.clip(exp_terms, 1e-32, 1e32)
 
     sum_expr_1 = np.sum(a_n_values * np.sin(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms, axis=0)
 
     exp_terms_b = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms_b = np.clip(exp_terms_b, 1e-15, 1e15)
+    exp_terms_b = np.clip(exp_terms_b, 1e-32, 1e32)
 
     sum_expr_2 = b_n_values[0] / 2 + np.sum(b_n_values[1:] * np.cos(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms_b, axis=0)
 
@@ -214,67 +165,75 @@ def loss_function_scipy(params, x_t, a_n_values, b_n_values, target1, target2):
     target2_np = target2.cpu().detach().numpy()
 
     loss = ((sum_expr_1 - target1_np) ** 2 + (sum_expr_2 - target2_np) ** 2).sum()
+    #print("total_loss", loss)
+    #print("sum_expr_1_loss", ((sum_expr_1 - target1_np) ** 2).sum())
+    #print("sum_expr_2_loss", ((sum_expr_2 - target2_np) ** 2).sum())
 
     return loss
 
-def optimize_mc_scipy(x_t, sigma, target1, target2, iterations=1000):
-    # 初期値の設定
-    x_t = x_t.clone().detach().requires_grad_(True)  # Ensure x_t requires gradient
-    initial_m = np.random.randn(*x_t.shape) * 0.1
-    initial_c = np.random.randn(*x_t.shape) * 0.1
-    initial_params = np.concatenate([initial_m.flatten(), initial_c.flatten()])
-    a_n_values = torch.stack([compute_fourier_an(n, sigma) for n in range(1, 6)], dim=0).view(-1, 1, 1)
-    b_n_values = torch.stack([compute_fourier_bn(n, sigma) for n in range(0, 6)], dim=0).view(-1, 1, 1)
-
-    # 制約を設定
-    lower_bound_c = 1e-6  # cの下限を設定
-    bounds = [(None, None)] * x_t.numel() + [(lower_bound_c, None)] * x_t.numel()
-
-    # 最適化の実行
-    result = minimize(loss_function_scipy, initial_params, args=(x_t, a_n_values, b_n_values, target1, target2), 
-                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations})
-
-    # 最適化されたパラメータの取得
-    optimized_params = result.x
-    m_optimized = optimized_params[:x_t.numel()].reshape(x_t.shape)
-    c_optimized = optimized_params[x_t.numel():].reshape(x_t.shape)
-
-    # NumPy 配列を PyTorch テンソルに変換
-    m_optimized = torch.from_numpy(m_optimized).float().requires_grad_(True)
-    c_optimized = torch.from_numpy(c_optimized).float().requires_grad_(True)
-
-    return m_optimized, c_optimized
-
 # 最適化関数の定義
-def optimize_mc(x_t, sigma, target1, target2, iterations=1000):
+def optimize_mc(x_t, sigma, target1, target2, iterations=20):
+    # ロスを記録するリスト
+    loss_history = []
+
+    # コールバック関数の定義
+    def callback(params):
+        iteration = len(loss_history) + 1
+        m = params[:x_t.numel()].reshape(x_t.shape)
+        c = params[x_t.numel():].reshape(x_t.shape)
+        loss = loss_function_scipy(params, x_t_cpu, a_n_values, b_n_values, target1, target2)
+        loss_history.append(loss)
+        if iteration % 50 == 0:
+            print(f"Iteration {iteration}, Current loss: {loss}")
+    
     x_t_cpu = x_t.cpu().detach().numpy()
     sigma_cpu = sigma.cpu().detach().numpy()
-    initial_m = np.random.randn(*x_t_cpu.shape) * 0.1
-    initial_c = np.random.randn(*x_t_cpu.shape) * 0.1
+    initial_m = np.ones_like(x_t_cpu) * 0.5
+    initial_c = np.ones_like(x_t_cpu) * 0.001
     initial_params = np.concatenate([initial_m.flatten(), initial_c.flatten()])
     a_n_values = np.stack([compute_fourier_an(n, sigma_cpu) for n in range(1, 6)], axis=0).reshape(-1, 1, 1)
     b_n_values = np.stack([compute_fourier_bn(n, sigma_cpu) for n in range(0, 6)], axis=0).reshape(-1, 1, 1)
 
-    lower_bound_c = 1e-6  # cの下限を設定
+    lower_bound_c = 1e-32  # cの下限を設定
     bounds = [(None, None)] * x_t_cpu.size + [(lower_bound_c, None)] * x_t_cpu.size
 
+    """result = minimize(loss_function_scipy, initial_params, args=(x_t_cpu, a_n_values, b_n_values, target1, target2), 
+                  method='TNC', bounds=bounds, options={'maxiter': iterations, 'ftol': 1e-9}, callback=callback)"""
     result = minimize(loss_function_scipy, initial_params, args=(x_t_cpu, a_n_values, b_n_values, target1, target2), 
-                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations})
-
+                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations}, callback=callback)
+    """result = minimize(loss_function_sol, initial_params, args=(x_t_cpu, sigma_cpu, target1, target2), 
+                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations}, callback=callback)"""
+    #L-BFGS-B
     optimized_params = result.x
     m_optimized = optimized_params[:x_t_cpu.size].reshape(x_t_cpu.shape)
     c_optimized = optimized_params[x_t_cpu.size:].reshape(x_t_cpu.shape)
 
     return m_optimized, c_optimized
 
-# 数値微分を用いて dm/dx_t および dc/dx_t を求める
-"""def calculate_derivatives(x_t, sigma, target1, target2, iterations=1000):
-    m_optimized, c_optimized = optimize_mc(x_t, sigma, target1, target2, iterations)
+def check_sol_2(m, c, x_t, sigma, target1, target2, sol_1, sol_2):
+    sigma_cpu = sigma.cpu().detach().numpy()
+    a_n_values = np.stack([compute_fourier_an(n, sigma_cpu) for n in range(1, 6)], axis=0).reshape(-1, 1, 1)
+    b_n_values = np.stack([compute_fourier_bn(n, sigma_cpu) for n in range(0, 6)], axis=0).reshape(-1, 1, 1)
+    exp_terms = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
+    exp_terms = np.clip(exp_terms, 1e-32, 1e32)
 
-    dm_dx_t = derivative(lambda x: optimize_mc(x, sigma, target1, target2, iterations)[0], x_t, dx=1e-6)
-    dc_dx_t = derivative(lambda x: optimize_mc(x, sigma, target1, target2, iterations)[1], x_t, dx=1e-6)
+    sum_expr_1 = np.sum(a_n_values * np.sin(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms, axis=0)
+
+    exp_terms_b = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
+    exp_terms_b = np.clip(exp_terms_b, 1e-32, 1e32)
+
+    sum_expr_2 = b_n_values[0] / 2 + np.sum(b_n_values[1:] * np.cos(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms_b, axis=0)
+
+    print("==================[target1=================\n", target1)
+    print("==================[sum_expr_1]=================\n", sum_expr_1)
+    print("==================[sol_1]=================\n", sol_1)
+    print("==================[target2]=================\n", target2)
+    print("==================[sum_expr_2]=================\n", sum_expr_2)
+    print("==================[sol_2]=================\n", sol_2)
+    print("==================[m]=================\n", m)
+    print("==================[c]=================\n", c)
     
-    return m_optimized, c_optimized, dm_dx_t, dc_dx_t"""
+
 
 # target1 と target2 を計算する関数
 def calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, num_atoms, batch):
@@ -305,6 +264,79 @@ def calculate_derivatives(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, n
     return m_optimized, c_optimized, dm_dx_t, dc_dx_t
 
 
+"""
+=======================================
+最新手法 m, c の計算 & table作成
+=======================================
+"""
+def calculate_s1(m, c, x_t):
+    k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
+    xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
+    m_expanded = m - xt_expanded  # (1, n, d)
+
+    erf_term1 = erf((-(1/2) + k + m_expanded) / np.sqrt(2 * c))
+    erf_term2 = erf((1/2 + k + m_expanded) / np.sqrt(2 * c))
+    s1_result = -np.sum(k / 2 * (erf_term1 - erf_term2), axis=0) + m_expanded
+    return s1_result
+
+def calculate_s2(m, c, x_t):
+    k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
+    xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
+    m_expanded = m - xt_expanded  # (1, n, d)
+
+    exp_term1 = np.exp(-((-(1/2) + k + m_expanded) ** 2 / (2 * c)))
+    exp_term2 = np.exp(-((1/2 + k + m_expanded) ** 2 / (2 * c)))
+    term1 = -np.sqrt(c / (2 * pi)) * np.sum((1/2 + k) * exp_term1 - (-(1/2) + k) * exp_term2, axis=0)
+    
+    erf_term1 = erf((-(1/2) + k + m_expanded) / np.sqrt(2 * c))
+    erf_term2 = erf((1/2 + k + m_expanded) / np.sqrt(2 * c))
+    term2 = -np.sum(1/2 * (k ** 2 + 2 * k * m_expanded) * (erf_term1 - erf_term2), axis=0)
+    
+    s2_result = term1 + term2 + c + m_expanded ** 2
+    return s2_result
+
+def generate_tables(x_t):
+    x_t_cpu = x_t.cpu().detach().numpy()
+    m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
+    c_values = np.arange(1e-2, 2 + 1/10, 1/10)
+    
+    n, d = x_t_cpu.shape
+    s1_table = np.zeros((n, d, len(m_values), len(c_values)))
+    s2_table = np.zeros((n, d, len(m_values), len(c_values)))
+    
+    for i, m in enumerate(m_values):
+        for j, c in enumerate(c_values):
+            s1_results = calculate_s1(m, c, x_t_cpu)
+            s2_results = calculate_s2(m, c, x_t_cpu)
+            s1_table[:, :, i, j] = s1_results
+            s2_table[:, :, i, j] = s2_results
+    
+    return s1_table, s2_table, m_values, c_values
+ 
+
+def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+    n, d, m_len, c_len = s1_table.shape
+    m = np.zeros((n, d))
+    c = np.zeros((n, d))
+
+    for i in range(n):
+        for j in range(d):
+            errmin = float('inf')
+            kmin = 0
+            lmin = 0
+            for im in range(m_len):
+                for ic in range(c_len):
+                    s1 = s1_table[i, j, im, ic]
+                    s2 = s2_table[i, j, im, ic]
+                    err = (sigma**2 * score1[i, j] - s1)**2 + (sigma**4 * score2[i, j] + sigma**2 - s2)**2
+                    if err < errmin:
+                        kmin, lmin = im, ic
+                        errmin = err
+            m[i, j] = m_table[kmin]
+            c[i, j] = c_table[lmin]
+            print(i, j, errmin)
+    return m, c
+
 def S_Q(x_t, m, c, num_atoms):
     Q = np.array(np.meshgrid(np.arange(5), np.arange(5), np.arange(5))).T.reshape(-1, 3)  # 3次元の Q ベクトル
     S_list = []
@@ -320,23 +352,6 @@ def S_Q(x_t, m, c, num_atoms):
         start = end
     return np.array(S_list).reshape(len(num_atoms), 5, 5, 5)
 
-"""def dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, num_atoms):
-    print(num_atoms)
-    Q = np.array(np.meshgrid(np.arange(5), np.arange(5), np.arange(5))).T.reshape(-1, 3)  # 3次元の Q ベクトル
-    dS_dx_t_list = []
-    start = 0
-    for atoms in num_atoms:
-        end = start + atoms
-        dS_dx_t = np.zeros(Q.shape[:-1], dtype=complex)  # Q の形状に合わせたゼロ初期化
-        for i in range(start, end):
-            for j in range(start, end):
-                f_ij = 1j * np.sum(Q * (m[j] - m[i]), axis=-1) - 0.5 * np.sum((Q**2) * (c[j] + c[i]), axis=-1)
-                exp_f_ij = np.exp(f_ij)  # 各次元での合計を取る
-                df_ij_dx_t = 1j * np.sum(Q * (dm_dx_t[j] - dm_dx_t[i]), axis=-1) - 0.5 * np.sum((Q**2) * (dc_dx_t[j] + dc_dx_t[i]), axis=-1)
-                dS_dx_t += exp_f_ij * df_ij_dx_t  # 各次元での合計を取る
-        dS_dx_t_list.append(np.abs(dS_dx_t))
-        start = end
-    return np.array(dS_dx_t_list).reshape(len(num_atoms), 5, 5, 5)"""
 
 def dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, num_atoms):
     Q = np.array(np.meshgrid(np.arange(5), np.arange(5), np.arange(5))).T.reshape(-1, 3)  # 3次元の Q ベクトル
