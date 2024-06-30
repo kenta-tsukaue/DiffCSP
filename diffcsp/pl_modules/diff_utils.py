@@ -81,6 +81,12 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     d2p = d2_p_wrapped_normal(x, sigma, N, T)
     #print("d2p.size()", d2p.size())
     d2_log_p = (d2p * p - dp**2) / p**2
+
+    """
+    print("sigma", sigma.shape, sigma)
+    print("x", x.shape, x)
+    print("d2_log_p / torch.sqrt(sigma)", d2_log_p.size(), d2_log_p/torch.sqrt(sigma))
+    """
     return d2_log_p
 
 
@@ -299,7 +305,7 @@ def generate_tables(x_t):
     x_t_cpu = x_t.cpu().detach().numpy()
     m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
     c_values = np.arange(1e-2, 2 + 1/10, 1/10)
-    
+
     n, d = x_t_cpu.shape
     s1_table = np.zeros((n, d, len(m_values), len(c_values)))
     s2_table = np.zeros((n, d, len(m_values), len(c_values)))
@@ -334,78 +340,19 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
                         errmin = err
             m[i, j] = m_table[kmin]
             c[i, j] = c_table[lmin]
-            print(i, j, errmin)
+            #print(i, j, errmin)
     return m, c
 
-def S_Q(x_t, m, c, num_atoms):
-    Q = np.array(np.meshgrid(np.arange(5), np.arange(5), np.arange(5))).T.reshape(-1, 3)  # 3次元の Q ベクトル
-    S_list = []
-    start = 0
-    for atoms in num_atoms:
-        end = start + atoms
-        S = np.zeros(Q.shape[:-1], dtype=complex)  # Q の形状に合わせたゼロ初期化
-        for i in range(start, end):
-            for j in range(start, end):
-                f_ij = 1j * np.sum(Q * (m[j] - m[i]), axis=-1) - 0.5 * np.sum((Q**2) * (c[j] + c[i]), axis=-1)
-                S += np.exp(f_ij)  # 各次元での合計を取る
-        S_list.append(np.abs(S))
-        start = end
-    return np.array(S_list).reshape(len(num_atoms), 5, 5, 5)
-
-
-def dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, num_atoms):
-    Q = np.array(np.meshgrid(np.arange(5), np.arange(5), np.arange(5))).T.reshape(-1, 3)  # 3次元の Q ベクトル
-    num_crystals = len(num_atoms)
-    max_atoms = max(num_atoms)
-    dS_dx_t_list = np.zeros((num_crystals, 5, 5, 5, max_atoms, 3), dtype=complex)
-
-    start = 0
-    for crystal_index, atoms in enumerate(num_atoms):
-        end = start + atoms
-        for i in range(start, end):
-            for j in range(start, end):
-                f_ij = 1j * np.sum(Q * (m[j] - m[i]), axis=-1) - 0.5 * np.sum((Q**2) * (c[j] + c[i]), axis=-1)
-                exp_f_ij = np.exp(f_ij).reshape(5, 5, 5)  # 各次元での合計を取る
-                for k in range(3):  # 各次元成分について計算
-                    df_ij_dx_t = 1j * Q[:, k] * (dm_dx_t[j, k] - dm_dx_t[i, k]) - 0.5 * Q[:, k]**2 * (dc_dx_t[j, k] + dc_dx_t[i, k])
-                    df_ij_dx_t = df_ij_dx_t.reshape(5, 5, 5)  # 形状を合わせる
-                    dS_dx_t_list[crystal_index, :, :, :, i-start, k] += exp_f_ij * df_ij_dx_t
-        start = end
-    
-    return np.abs(dS_dx_t_list)
-
-def calculate_dy(dS_dx_t_result, y, s, num_atoms):
-    sigma = 100000
-    num_crystals = len(num_atoms)
-    n = sum(num_atoms)
-    expression_result = np.zeros((n, 3), dtype=complex)
-    
-    start = 0
-    for crystal_index, atoms in enumerate(num_atoms):
-        end = start + atoms
-        crystal_y = y[crystal_index]
-        crystal_s = s[crystal_index]
-
-        for i in range(atoms):
-            for j in range(5):
-                for k in range(5):
-                    for l in range(5):
-                        expression_result[start + i, :] += -1 * (crystal_y[j, k, l] - crystal_s[j, k, l]) * dS_dx_t_result[crystal_index, j, k, l, i, :] / sigma
-        start = end
-    expression_result = expression_result.real
-    
-    return expression_result
-
-
-def complex_sum(k, A):
+def I_hkl(k, A_m, A_c):
     """
-    3次元ベクトル k と (n x 3) の行列 A を受け取り、
-    行列 A の各行とベクトル k の内積 r を計算し、
-    exp(2 * pi * i * r) を足し合わせて、その和を返す関数。
+    3次元ベクトル k と (n x 3) の行列 A_m, A_c を受け取り、
+    I(h,k,l) = sum_j sum_k exp{2 * pi * I [(m_j - m_k)・(h,k,l) - 2 * pi^2 (c_j + c_k)・(h^2, k^2, l^2)]}
+    を計算する関数。
 
     Parameters:
-    k (np.ndarray): 3次元ベクトル
-    A (np.ndarray): (n x 3) の行列
+    k (np.ndarray): 3次元ベクトル (h, k, l)
+    A_m (np.ndarray): (n x 3) の行列 m_j
+    A_c (np.ndarray): (n x 3) の行列 c_j
 
     Returns:
     complex: 複素数の和
@@ -414,40 +361,341 @@ def complex_sum(k, A):
     pi = np.pi
 
     # CUDAテンソルをCPUに移動させてNumPy配列に変換
-    if isinstance(A, torch.Tensor):
-        A = A.cpu().numpy()
+    if isinstance(A_m, torch.Tensor):
+        A_m = A_m.cpu().numpy()
+    if isinstance(A_c, torch.Tensor):
+        A_c = A_c.cpu().numpy()
 
-    # 各行とベクトル k の内積を計算
-    r = np.dot(A, k)
+    # 行数を取得
+    n = A_m.shape[0]
 
-    # exp(2 * pi * i * r) の和を計算
-    result = np.sum(np.exp(2 * pi * i * r))
+    # 複素数の和を計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            diff_m = A_m[j] - A_m[m]
+            sum_c = A_c[j] + A_c[m]
+            r_m = np.dot(diff_m, k)
+            r_c = np.dot(sum_c, k**2)
+            result += np.exp(2 * pi * i * r_m - 2 * pi**2 * r_c)
 
-    return result
+    return result.real
 
-def calculate_y(num_atoms, batch):
+def calculate_I(num_atoms, batch, m, c):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     # kの範囲設定
-    k1_values = np.arange(0, 5, 1)
-    k2_values = np.arange(0, 5, 1)
-    k3_values = np.arange(0, 5, 1)
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
     # 結果を格納する配列
     Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values)))
 
     # バッチ内の全ての結晶に対してループ
-    for i in range(num_crystals):
-        start_index = sum(batch['num_atoms'][:i])  # i番目の結晶の開始インデックス
-        end_index = start_index + batch['num_atoms'][i]  # i番目の結晶の終了インデックス
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m[start_index:end_index]
+        frac_coords_c = c[start_index:end_index]
+        # k1とk2を動かしてcomplex_sumの値を計算
+        for j, k1 in enumerate(k1_values):
+            for l, k2 in enumerate(k2_values):
+                for n, k3 in enumerate(k3_values):
+                    k = np.array([k1, k2, k3])
+                    Z[I, j, l, n] = I_hkl(k, frac_coords_m, frac_coords_c)
+    return Z
+
+
+def calculate_delI_delm_delm_delx_t(num_atoms, batch, m, c, delm_delx_t):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
+
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m[start_index:end_index]
+        frac_coords_c = c[start_index:end_index]
+        delm_coords = delm_delx_t[start_index:end_index]
+        
+        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+
+        # k1とk2を動かして複素数の和を計算
+        for a, k1 in enumerate(k1_values):
+            for b, k2 in enumerate(k2_values):
+                for c, k3 in enumerate(k3_values):
+                    K = np.array([k1, k2, k3])
+                    # 計算を行う
+                    result = np.zeros((num_atoms_max, 3))
+                    for i in range(n_atoms):
+                        for j in range(n_atoms):
+                            diff_m = frac_coords_m[i] - frac_coords_m[j]
+                            sum_c = frac_coords_c[i] + frac_coords_c[j]
+                            r_m = np.dot(diff_m, K)
+                            r_c = np.dot(sum_c, K**2)
+                            temp_result = -4 * np.pi * K * np.sin(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+                            result[i] += temp_result * delm_coords[i]
+                    Z[I, a, b, c, :n_atoms, :] = result
+
+    return Z
+
+def calculate_delI_delc_delc_delx_t(num_atoms, batch, m, c, delc_delx_t):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
+
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m[start_index:end_index]
+        frac_coords_c = c[start_index:end_index]
+        delc_coords = delc_delx_t[start_index:end_index]
+        
+        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+
+        # k1とk2を動かして複素数の和を計算
+        for a, k1 in enumerate(k1_values):
+            for b, k2 in enumerate(k2_values):
+                for c, k3 in enumerate(k3_values):
+                    K = np.array([k1, k2, k3])
+                    K_squared = K**2  # 各要素の二乗からなる3次元ベクトル
+                    # 計算を行う
+                    result = np.zeros((num_atoms_max, 3))
+                    for i in range(n_atoms):
+                        for j in range(n_atoms):
+                            diff_m = frac_coords_m[i] - frac_coords_m[j]
+                            sum_c = frac_coords_c[i] + frac_coords_c[j]
+                            r_m = np.dot(diff_m, K)
+                            r_c = np.dot(sum_c, K_squared)
+                            temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+                            result[i] += temp_result * delc_coords[i]
+                    Z[I, a, b, c, :n_atoms, :] = result
+
+    return Z
+
+def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5):
+    # I, y: (n, 5, 5, 5)
+    # delI: (n, 5, 5, 5, m, 3)
+    # sigma: float
+    # num_atoms: list of integers
+
+    # Calculate the difference I - y and expand its dimensions to match delI
+    difference = (I - y)[:, :, :, :, np.newaxis, np.newaxis]
+
+    # Compute the product (I - y) * delI
+    product = difference * delI
+
+    # Sum over the (5, 5, 5) dimensions
+    sum_product = np.sum(product, axis=(1, 2, 3))
+
+    # Compute the intermediate result
+    intermediate_result = -1 / sigma**2 * sum_product  # shape (n, m, 3)
+
+    # Initialize the final result list
+    final_result = []
+
+    # Adjust the result based on num_atoms
+    for i, atoms in enumerate(num_atoms):
+        final_result.append(intermediate_result[i, :atoms, :])
+
+    # Concatenate the results to form the final output of shape (l, 3)
+    final_result = np.concatenate(final_result, axis=0)
+
+    return final_result
+
+
+def complex_sum_squared(k, A):
+    """
+    3次元ベクトル k と (n x 3) の行列 A を受け取り、
+    |F(h,k,l)|^2 = sum_j sum_k exp{2 * pi * I [(x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l]}
+    を計算する関数。
+
+    Parameters:
+    k (np.ndarray): 3次元ベクトル
+    A (np.ndarray): (n x 3) の行列
+
+    Returns:
+    float: 複素数の和の絶対値の2乗
+    """
+    i = complex(0, 1)
+    pi = np.pi
+
+    # CUDAテンソルをCPUに移動させてNumPy配列に変換
+    if isinstance(A, torch.Tensor):
+        A = A.cpu().numpy()
+
+    # 行数を取得
+    n = A.shape[0]
+
+    # 絶対値の2乗の和を計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            diff = A[j] - A[m]
+            r = np.dot(diff, k)
+            result += np.exp(2 * pi * i * r)
+
+    # 和の絶対値の2乗を計算
+    return result
+
+def calculate_y_squared(num_atoms, batch):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values)))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
         first_frac_coords = batch['frac_coords'][start_index:end_index]
         # k1とk2を動かしてcomplex_sumの値を計算
         for j, k1 in enumerate(k1_values):
             for l, k2 in enumerate(k2_values):
                 for m, k3 in enumerate(k3_values):
                     k = np.array([k1, k2, k3])
-                    Z[i, j, l, m] = np.abs(complex_sum(k, first_frac_coords))
+                    Z[I, j, l, m] = complex_sum_squared(k, first_frac_coords)
     return Z
-    
 
+def to_cpu(tensor):
+    if isinstance(tensor, torch.Tensor):
+        return tensor.cpu().numpy()
+    return tensor
+
+# ∂(1)/∂mを算出
+def calculate_del1_delm(m, c, sigma, x_t):
+    m, c, sigma, x_t = map(to_cpu, [m, c, sigma, x_t])
+    
+    k_values = np.arange(-4, 5).reshape(-1, 1, 1)
+    coefficient = - (1 / sigma**2) * (1 / 4) * np.sqrt(2 / (np.pi * c))
+    
+    Expp = np.exp(-((1/2 + k_values + m - x_t)**2) / (2 * c))
+    Expm = np.exp(-((-1/2 + k_values + m - x_t)**2) / (2 * c))
+    
+    terms_sum = coefficient * (Expm - Expp)
+    
+    sum_result = np.sum(terms_sum, axis=0)
+    
+    return sum_result
+
+
+# ∂(1)/∂cを算出
+def calculate_del1_delc(m, c, sigma, x_t):
+    m, c, sigma, x_t = map(to_cpu, [m, c, sigma, x_t])
+    
+    k_values = np.arange(-4, 5).reshape(-1, 1, 1)
+    coefficient = -1 / (sigma**2 * 8 * c**(3/2) * np.sqrt(2 * np.pi))
+    
+    Expp = np.exp(-((1/2 + k_values + m - x_t)**2) / (2 * c))
+    Expm = np.exp(-((-1/2 + k_values + m - x_t)**2) / (2 * c))
+    
+    term1 = (1 + 4 * c) * (Expm - Expp)
+    term2 = -2 * (Expm + Expp) * (k_values + m - x_t)
+    
+    terms_sum = coefficient * (term1 + term2)
+    
+    sum_result = np.sum(terms_sum, axis=0)
+    
+    return sum_result
+
+
+# ∂(2)/∂mを算出
+def calculate_del2_delm(m, c, sigma, x_t):
+    m, c, sigma, x_t = map(to_cpu, [m, c, sigma, x_t])
+    
+    k_values = np.arange(-4, 5).reshape(-1, 1, 1)
+    coefficient = 1 / (sigma**2 * 2 * c * np.sqrt(2 * np.pi * c))
+    
+    Expp = np.exp(-((1/2 + k_values + m - x_t)**2) / (2 * c))
+    Expm = np.exp(-((-1/2 + k_values + m - x_t)**2) / (2 * c))
+    
+    #print("Expm:", Expm)
+    #print("Expp:", Expp)
+    
+    term = coefficient * (Expp * (-1/2 - k_values - m + x_t) + Expm * (1/2 - k_values - m + x_t))
+    
+    #print("Term:", term)
+    
+    sum_result = np.sum(term, axis=0)
+    
+    #print("Sum result:", sum_result)
+    
+    return sum_result
+
+# ∂(2)/∂cを算出
+def calculate_del2_delc(m, c, sigma, x_t):
+    m, c, sigma, x_t = map(to_cpu, [m, c, sigma, x_t])
+    
+    k_values = np.arange(-4, 5).reshape(-1, 1, 1)
+    coefficient = 1 / (sigma**2 * 4 * c**2 * np.sqrt(2 * np.pi * c))
+    
+    Expp = np.exp(-((1/2 + k_values + m - x_t)**2) / (2 * c))
+    Expm = np.exp(-((-1/2 + k_values + m - x_t)**2) / (2 * c))
+    
+    #print("Expm:", Expm)
+    #print("Expp:", Expp)
+    
+    term1 = -c * (Expm + Expp)
+    term2 = Expp * (1/2 + k_values + m - x_t)**2
+    term3 = Expm * (-1/2 + k_values + m - x_t)**2
+    
+    #print("Term1:", term1)
+    #print("Term2:", term2)
+    #print("Term3:", term3)
+    
+    terms_sum = coefficient * (term1 + term2 + term3)
+    
+    #print("Terms sum:", terms_sum)
+    
+    sum_result = np.sum(terms_sum, axis=0)
+    
+    #print("Sum result:", sum_result)
+    
+    return sum_result
+
+# ∂m/∂x_t, ∂c/∂x_tを算出
+def calculate_delx_t(m1, m2, c1, c2, s1, s2):
+    m1, m2, c1, c2, s1, s2 = map(to_cpu, [m1, m2, c1, c2, s1, s2])
+
+    # nx3 の行列の形状を取得
+    n, _ = m1.shape
+    
+    # 結果を格納するための配列を初期化
+    delm_delx = np.zeros((n, 3))
+    delc_delx = np.zeros((n, 3))
+    
+    # 各要素について delm_delx, delc_delx を計算
+    for i in range(n):
+        for j in range(3):
+            # 定数行列とベクトルを定義
+            M = np.array([[m1[i, j], c1[i, j]], [m2[i, j], c2[i, j]]])
+            C = np.array([s2[i, j] + m1[i, j], 2 * s2[i, j] * s1[i, j] + m2[i, j]])
+            
+            # 行列方程式を解く
+            solution = np.linalg.solve(M, C)
+            
+            # delm_delx, delc_delx の値を格納
+            delm_delx[i, j], delc_delx[i, j] = solution
+    
+    return delm_delx, delc_delx
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
     sigmas = sigma[None, :].repeat(sn, 1)

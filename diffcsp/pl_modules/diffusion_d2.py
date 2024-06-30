@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives, dS_Q_dx_t, S_Q, calculate_y, calculate_dy, check_sol_2, generate_tables, find_best_fit
+from diffcsp.pl_modules.diff_utils import calculate_del1_delc, calculate_del1_delm, calculate_del2_delc, calculate_del2_delm, calculate_delI_delc_delc_delx_t, calculate_delI_delm_delm_delx_t, calculate_dellogp_delx_t, calculate_delx_t, d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives,  calculate_y_squared, check_sol_2, generate_tables, find_best_fit, calculate_I
 from diffcsp.pl_modules.chksol_1 import check_sol
 MAX_ATOMIC_NUM=100
 
@@ -83,24 +83,26 @@ class CSPDiffusion(BaseModule):
         self.keep_coords = self.hparams.cost_coord < 1e-5,
 
     def forward(self, batch):
-        """
+        
         print(batch)
-        print("================[batch.y]===============\n",batch.y)
-        print("================[batch.frac_coords]===============\n",batch.frac_coords)
-        print("================[batch.atom_types]===============\n",batch.atom_types)
-        for i in range(len(batch.atom_types)):
-            print(batch.atom_types[i])
-        print("================[batch.lengths]===============\n",batch.lengths)
-        print("================[batch.angles]===============\n",batch.angles)
-        print("================[batch.to_jimages]===============\n",batch.to_jimages)
-        print("================[batch.num_atoms]===============\n",batch.num_atoms)
-        print("================[batch.num_bonds]===============\n",batch.num_bonds)
-        print("================[batch.num_nodes]===============\n",batch.num_nodes)
-        """
+        #print("================[batch.y]===============\n",batch.y)
+        #print("================[batch.frac_coords]===============\n",batch.frac_coords)
+        #print("================[batch.atom_types]===============\n",batch.atom_types)
+        #
+        #     print(batch.atom_types[i])
+        #print("================[batch.lengths]===============\n",batch.lengths)
+        #print("================[batch.angles]===============\n",batch.angles)
+        #print("================[batch.to_jimages]===============\n",batch.to_jimages)
+        #print("================[batch.num_atoms]===============\n",batch.num_atoms)
+        #print("================[batch.num_bonds]===============\n",batch.num_bonds)
+        #print("================[batch.num_nodes]===============\n",batch.num_nodes)
+        
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
+        print(times.shape)
 
         time_emb = self.time_embedding(times)
+        print("time_emb", time_emb.shape)
 
         alphas_cumprod = self.beta_scheduler.alphas_cumprod[times]
         beta = self.beta_scheduler.betas[times]
@@ -156,6 +158,70 @@ class CSPDiffusion(BaseModule):
             'loss_coord' : loss_coord,
             'loss_coord_d2' : loss_coord_d2
         }
+    
+    def check_d2(self, batch):
+        time = 200
+        print("タイムステップ:", time)
+        batch_size = batch.num_graphs
+        times = torch.full((batch_size,), time, device=self.device) #800に固定
+
+        time_emb = self.time_embedding(times)
+
+        alphas_cumprod = self.beta_scheduler.alphas_cumprod[times]
+        beta = self.beta_scheduler.betas[times]
+
+        c0 = torch.sqrt(alphas_cumprod)
+        c1 = torch.sqrt(1. - alphas_cumprod)
+
+        sigmas = self.sigma_scheduler.sigmas[times]
+        print("sigmas : ",sigmas)
+        sigmas_norm = self.sigma_scheduler.sigmas_norm[times]
+        
+
+        lattices = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
+        frac_coords = batch.frac_coords
+
+        rand_l, rand_x = torch.randn_like(lattices), torch.randn_like(frac_coords)
+
+        input_lattice = c0[:, None, None] * lattices + c1[:, None, None] * rand_l
+        sigmas_per_atom = sigmas.repeat_interleave(batch.num_atoms)[:, None]
+        sigmas_norm_per_atom = sigmas_norm.repeat_interleave(batch.num_atoms)[:, None]
+        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
+
+        # Compute derivatives
+        epsilon = 1e-2
+        input_frac_coords = input_frac_coords.detach().clone()
+        derivatives = torch.zeros_like(input_frac_coords)
+
+        for i in range(input_frac_coords.shape[0]):
+            for j in range(input_frac_coords.shape[1]):
+                input_frac_coords_plus = input_frac_coords.clone()
+                input_frac_coords_plus[i, j] += epsilon
+                input_frac_coords_plus = input_frac_coords_plus
+                
+                input_frac_coords_minus = input_frac_coords.clone()
+                input_frac_coords_minus[i, j] -= epsilon
+                input_frac_coords_minus = input_frac_coords_minus
+
+                _, pred_x_plus = self.decoder(time_emb, batch.atom_types, input_frac_coords_plus, input_lattice, batch.num_atoms, batch.batch)
+                _, pred_x_minus = self.decoder(time_emb, batch.atom_types, input_frac_coords_minus, input_lattice, batch.num_atoms, batch.batch)
+
+                derivative = (pred_x_plus - pred_x_minus) / (2 * epsilon)
+                derivatives[i, j] = derivative.mean()
+
+        
+        print("x_0からx_tへの変化(x_t - x_0)\n", input_frac_coords.shape, "\n", sigmas_per_atom * rand_x)
+        pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
+        
+        print("予測されたスコア\n", pred_x.shape, "\n", pred_x)
+        print("真のスコア\n", tar_x.shape, "\n", tar_x)
+        tar_x_d2 = d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom) + tar_x**2
+
+        print("予測されたスコアから求めた二次スコアDerivatives:\n", derivatives)
+        print("予測された二次スコア:\n", pred_x_d2.shape,"\n", pred_x_d2)
+        print("真のニ次スコア:\n", tar_x_d2.shape, "\n", d2_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom))
     
     @torch.no_grad()
     def sample(self, batch, step_lr = 1e-5):
@@ -225,30 +291,49 @@ class CSPDiffusion(BaseModule):
             #新しい方法でmとcを求める
             s1_table, s2_table, m_values, c_values = generate_tables(x_t)
             m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
-            print("m", m.shape, m)
-            print("c", c.shape, c)
-            #この2次スコアを用いてまずはmとcを求める
-            #m, c, dm_dx_t, dc_dx_t = calculate_derivatives(self.decoder, self.decoder_d2, time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch, sigma_x)
-            #sol_1, sol_2 = check_sol(sigma_x, c, m, pred_x, pred_x_d2 + pred_x**2)
-
-            #print("=========================================[デバッグ]=======================================\n")
-            #check_sol_2(m, c, x_t, sigma_x, pred_x, pred_x_d2 + pred_x**2, sol_1, sol_2)
-            #print("=========================================================================================\n")
-            
-            # dS(Q)を求める
-            #SQ = S_Q(x_t, m, c, batch.num_atoms)
-            #d_SQ = dS_Q_dx_t(x_t, m, c, dm_dx_t, dc_dx_t, batch.num_atoms)
-
+            #print("m", m.shape, m)
+            #print("c", c.shape, c)
+        
             # yを求める
-            #y = calculate_y(batch.num_atoms, batch)
-            #print("SQ", SQ.shape, SQ)
-            #print("d_SQ", d_SQ.shape, d_SQ)
-            #print("y", y.shape, y)
+            y = calculate_y_squared(batch.num_atoms, batch)
+            I = calculate_I(batch.num_atoms, batch, m, c)
+            #print("y",y.shape, y)
+            #print("I", I.shape, I)
 
-            # dyを求める
-            #dy = calculate_dy(d_SQ, y, SQ, batch.num_atoms)
-            #("dy", dy.shape)
-            #print(dy)
+            # ∂(1)/∂m, ∂(1)/∂cを求める
+            del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
+            del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
+
+            #print("del1_delm", del1_delm.shape, del1_delm)
+            #print("del1_delc", del1_delc.shape, del1_delc)
+
+            # ∂(2)/∂m, ∂(2)/∂cを求める
+            del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
+            del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
+
+            #print("del2_delm", del2_delm.shape, del2_delm)
+            #print("del2_delc", del2_delc.shape, del2_delc)
+
+
+            # ∂m/∂x_t, ∂c/x_tを求める   
+            delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
+
+            #print(delm_delx)
+            #print(delc_delx)
+            #print("delm_delx", delm_delx.shape, delm_delx)
+            #print("delc_delx", delc_delx.shape, delc_delx)
+
+            # ∂I/∂x_tを求める
+            delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
+            delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
+
+            print("delI_delm_delm_delx_t", delI_delm_delm_delx_t.shape, delI_delm_delm_delx_t[0][0][0][0])
+            print("delI_delc_delc_delx_t", delI_delc_delc_delx_t.shape, delI_delc_delc_delx_t[0][0][0][0])
+
+            dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delm_delm_delx_t, batch.num_atoms, sigma=0.5)
+
+            print("dellogp_delx_t", dellogp_delx_t.shape, dellogp_delx_t)
+
 
             #dy = torch.tensor(dy).to('cuda').type(pred_x.dtype)
             pred_x = pred_x * torch.sqrt(sigma_norm)
@@ -366,6 +451,7 @@ class CSPDiffusion(BaseModule):
         return log_dict, loss
     
 
+    
     
     
     
