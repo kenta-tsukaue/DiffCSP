@@ -26,8 +26,8 @@ def plot_complete_unit_cell(ax, lattice, origin):
 
 def main():
     # Load the batch data
-    loaded_batch = torch.load('sample/d2_sample_gradual/batch.pt', map_location=torch.device('cpu'))
-    print(loaded_batch)
+    loaded_batch = torch.load('sample/d2_sample_gradual/traj.pt', map_location=torch.device('cpu'))
+    #print(loaded_batch)
     # Extract data for the first crystal
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
     
@@ -39,14 +39,8 @@ def main():
         # i番目の結晶のデータを抽出
         first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
         first_atom_types = loaded_batch['atom_types'][start_index:end_index]
-        first_lengths = loaded_batch['lengths'][i]
-        first_angles = loaded_batch['angles'][i]
-
-        # Latticeオブジェクトを生成（格子パラメータから）
-        lattice = Lattice.from_parameters(first_lengths[0], first_lengths[1], first_lengths[2],
-                                          first_angles[0], first_angles[1], first_angles[2])
-        
-        print(lattice)
+        lattice_tensor = loaded_batch['lattices'][i]
+        lattice = Lattice(lattice_tensor.numpy())
 
         # pymatgenのStructureオブジェクトを作成
         structure = Structure(lattice, first_atom_types, first_frac_coords)

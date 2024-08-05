@@ -6,7 +6,6 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
 import matplotlib.pyplot as plt
 
-
 def visualize_structure(structure):
     """結晶構造を可視化するヘルパー関数"""
     vis = StructureVis()
@@ -43,7 +42,6 @@ def visualize_complex_sum(A, num_atoms):
     k2_values = np.arange(-2, 2, 1)
     # 結果を格納する配列
     Z = np.zeros((len(k1_values), len(k2_values)))
-    print(Z)
 
     # k1とk2を動かしてcomplex_sumの値を計算
     for i, k1 in enumerate(k1_values):
@@ -51,7 +49,6 @@ def visualize_complex_sum(A, num_atoms):
             k = np.array([k1, k2, 0])
             Z[i, j] = np.abs(complex_sum(k, A))
 
-    print(Z)
 
     # プロット
     X, Y = np.meshgrid(k1_values, k2_values)
@@ -68,9 +65,9 @@ def visualize_complex_sum(A, num_atoms):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d2_sample_gradual/batch.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/d2_sample_gradual/traj.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
-    print(loaded_batch)
+    #print(loaded_batch)
 
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
 
@@ -82,13 +79,12 @@ def main():
         # i番目の結晶のデータを抽出
         first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
         first_atom_types = loaded_batch['atom_types'][start_index:end_index]
-        first_lengths = loaded_batch['lengths'][i]
-        first_angles = loaded_batch['angles'][i]
         num_atoms = loaded_batch['num_atoms'][i]
-
-        # Latticeオブジェクトを生成（格子パラメータから）
-        lattice = Lattice.from_parameters(first_lengths[0], first_lengths[1], first_lengths[2],
-                                          first_angles[0], first_angles[1], first_angles[2])
+        lattice = loaded_batch['lattices'][i]
+        print(first_frac_coords)
+        print(first_atom_types)
+        print(num_atoms)
+        print(lattice)
 
         # pymatgenのStructureオブジェクトを作成
         structure = Structure(lattice, first_atom_types, first_frac_coords)

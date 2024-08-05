@@ -4,6 +4,8 @@ import torch
 from pymatgen.core.structure import Structure
 from pymatgen.core.lattice import Lattice
 from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
+import plotly.graph_objects as go
+
 
 def visualize_structure(structure):
     """結晶構造を可視化するヘルパー関数"""
@@ -11,11 +13,27 @@ def visualize_structure(structure):
     vis.set_structure(structure)
     vis.show()
 
+def visualize_structure_plotly(structure):
+    """結晶構造を可視化するヘルパー関数"""
+    frac_coords = structure.frac_coords
+    xs = frac_coords[:, 0]
+    ys = frac_coords[:, 1]
+    zs = frac_coords[:, 2]
+
+    fig = go.Figure(data=[go.Scatter3d(x=xs, y=ys, z=zs, mode='markers')])
+    fig.update_layout(scene=dict(
+        xaxis=dict(nticks=10, range=[0, 1]),
+        yaxis=dict(nticks=10, range=[0, 1]),
+        zaxis=dict(nticks=10, range=[0, 1]),
+        aspectmode='cube'  # 各軸のスケールを同じに設定
+    ))
+    fig.show()
+
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d2_sample_gradual/batch.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/d2_sample_gradual/traj.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
-    print(loaded_batch)
+    #print(loaded_batch)
 
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
 
@@ -28,12 +46,8 @@ def main():
         first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
         print(first_frac_coords)
         first_atom_types = loaded_batch['atom_types'][start_index:end_index]
-        first_lengths = loaded_batch['lengths'][i]
-        first_angles = loaded_batch['angles'][i]
-
-        # Latticeオブジェクトを生成（格子パラメータから）
-        lattice = Lattice.from_parameters(first_lengths[0], first_lengths[1], first_lengths[2],
-                                          first_angles[0], first_angles[1], first_angles[2])
+        lattice = loaded_batch['lattices'][i]
+        print(lattice)
 
         # pymatgenのStructureオブジェクトを作成
         structure = Structure(lattice, first_atom_types, first_frac_coords)

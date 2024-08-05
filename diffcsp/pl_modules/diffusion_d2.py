@@ -198,11 +198,11 @@ class CSPDiffusion(BaseModule):
             x_t = traj[t]['frac_coords']
             l_t = traj[t]['lattices']
 
-            if self.keep_coords:
+            """if self.keep_coords:
                 x_t = x_T
 
             if self.keep_lattice:
-                l_t = l_T
+                l_t = l_T"""
 
             # PC-sampling refers to "Score-Based Generative Modeling through Stochastic Differential Equations"
             # Origin code : https://github.com/yang-song/score_sde/blob/main/sampling.py
@@ -225,9 +225,9 @@ class CSPDiffusion(BaseModule):
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
-            x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t
+            x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
 
-            l_t_minus_05 = l_t if not self.keep_lattice else l_t
+            l_t_minus_05 = l_t
 
             # Predictor
 
@@ -242,9 +242,9 @@ class CSPDiffusion(BaseModule):
             
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
-            x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t
+            x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x
 
-            l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
+            l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l
 
 
             traj[t - 1] = {

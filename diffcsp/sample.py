@@ -133,7 +133,7 @@ def run(cfg: DictConfig) -> None:
     yaml_conf: str = OmegaConf.to_yaml(cfg=cfg)
     (hydra_dir / "hparams.yaml").write_text(yaml_conf)
 
-    ckpt = "/home/tsukaue/code/DiffCSP/hydra/singlerun/2024-05-12/test_d2_3/weight.ckpt"
+    ckpt = "/home/tsukaue/code/DiffCSP/hydra/singlerun/2024-07-17/train_d1_31/epoch=2164-step=51960.ckpt"
 
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint['state_dict'])
