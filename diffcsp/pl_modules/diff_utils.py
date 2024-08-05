@@ -303,8 +303,10 @@ def calculate_s2(m, c, x_t):
 
 def generate_tables(x_t):
     x_t_cpu = x_t.cpu().detach().numpy()
-    m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
-    c_values = np.arange(1e-2, 2 + 1/10, 1/10)
+    #m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
+    #c_values = np.arange(1e-2, 2 + 1/10, 1/10)
+    m_values = np.arange(-0.5, 0.5 + 1/20, 1/5000)
+    c_values = np.arange(1e-2, 2e-2, 1)
 
     n, d = x_t_cpu.shape
     s1_table = np.zeros((n, d, len(m_values), len(c_values)))
@@ -340,6 +342,7 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
                         errmin = err
             m[i, j] = m_table[kmin]
             c[i, j] = c_table[lmin]
+            #print("m[i,j]", m[i,j])
             #print(i, j, errmin)
     return m, c
 
@@ -441,7 +444,8 @@ def calculate_delI_delm_delm_delx_t(num_atoms, batch, m, c, delm_delx_t):
                             r_m = np.dot(diff_m, K)
                             r_c = np.dot(sum_c, K**2)
                             temp_result = -4 * np.pi * K * np.sin(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            result[i] += temp_result * delm_coords[i]
+                            #result[i] += temp_result * delm_coords[i] 
+                            result[i] += temp_result #一旦∂I/∂mを求める
                     Z[I, a, b, c, :n_atoms, :] = result
 
     return Z
@@ -483,9 +487,9 @@ def calculate_delI_delc_delc_delx_t(num_atoms, batch, m, c, delc_delx_t):
                             r_m = np.dot(diff_m, K)
                             r_c = np.dot(sum_c, K_squared)
                             temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            result[i] += temp_result * delc_coords[i]
+                            #result[i] += temp_result * delc_coords[i]
+                            result[i] += temp_result
                     Z[I, a, b, c, :n_atoms, :] = result
-
     return Z
 
 def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5):
@@ -493,6 +497,8 @@ def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5):
     # delI: (n, 5, 5, 5, m, 3)
     # sigma: float
     # num_atoms: list of integers
+    if isinstance(sigma, torch.Tensor):
+        sigma = sigma.cpu().numpy()
 
     # Calculate the difference I - y and expand its dimensions to match delI
     difference = (I - y)[:, :, :, :, np.newaxis, np.newaxis]
@@ -688,6 +694,7 @@ def calculate_delx_t(m1, m2, c1, c2, s1, s2):
             # 定数行列とベクトルを定義
             M = np.array([[m1[i, j], c1[i, j]], [m2[i, j], c2[i, j]]])
             C = np.array([s2[i, j] + m1[i, j], 2 * s2[i, j] * s1[i, j] + m2[i, j]])
+            #C = np.array([s2[i, j] + m1[i, j], 0]) #デバッグ用
             
             # 行列方程式を解く
             solution = np.linalg.solve(M, C)
@@ -696,6 +703,40 @@ def calculate_delx_t(m1, m2, c1, c2, s1, s2):
             delm_delx[i, j], delc_delx[i, j] = solution
     
     return delm_delx, delc_delx
+
+def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch):
+    #新しい方法でmとcを求める
+    s1_table, s2_table, m_values, c_values = generate_tables(x_t)
+    m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
+
+    # yとIを求める
+    y = calculate_y_squared(batch.num_atoms, batch) # 真の値
+    I = calculate_I(batch.num_atoms, batch, m, c) # ノイズが加わった際の値
+
+    # ∂(1)/∂m, ∂(1)/∂cを求める
+    del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
+    del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
+
+    # ∂(2)/∂m, ∂(2)/∂cを求める
+    del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
+    del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
+
+    # ∂m/∂x_t, ∂c/x_tを求める   
+    delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
+
+    # ∂I/∂x_tを求める
+    delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
+    delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
+
+    delI_delx_t = delI_delm_delm_delx_t + delI_delc_delc_delx_t
+
+    dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delx_t, batch.num_atoms, sigma=sigma_x)
+    dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
+    max_abs_value = pred_x.abs().max()
+    dellogp_delx_t = dellogp_delx_t / (max_abs_value * 10)
+    #print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
+    return dellogp_delx_t
+
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
     sigmas = sigma[None, :].repeat(sn, 1)
@@ -744,6 +785,42 @@ class BetaScheduler(nn.Module):
     def uniform_sample_t(self, batch_size, device):
         ts = np.random.choice(np.arange(1, self.timesteps+1), batch_size)
         return torch.from_numpy(ts).to(device)
+    
+
+def generate_crystal_structures():
+    scale_factor = 0.6
+    offset = 0.5 * (1 - scale_factor)
+
+    r1 = np.sqrt(0.5) * scale_factor
+
+    # 正八角形 (octagon)
+    octagon = [[(np.cos(theta) * r1 + 1) / 2, (np.sin(theta) * r1 + 1) / 2, 0.5] for theta in np.arange(0, 2 * np.pi, np.pi / 4)]
+    octagon = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in octagon]
+
+    # 直線 (line)
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-4, 4)]
+    line = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+
+    # 正六面体 (cube)
+    square1 = [[(np.cos(theta) * r1 + 1) / 2, (np.sin(theta) * r1 + 1) / 2] for theta in np.arange(np.pi / 4, 2 * np.pi, np.pi / 2)]
+    cube = [[x, y, (z + 1) / 2] for z in [-0.5, 0.5] for x, y in square1]
+    cube = [[x * scale_factor + offset, y * scale_factor + offset, z * scale_factor + offset] for x, y, z in cube]
+
+    # ジグザグ構造 (zigzag)
+    zigzag = [[(x + 1) / 2, (y + 1) / 2, (z + 0.25) * 2] for z in [-0.25, 0.25] for x, y in zip(np.arange(-3 / 8, 0.5, 1 / 4), [-1 / 8, 1 / 8] * 2)]
+    zigzag = [[x * scale_factor + offset, y * scale_factor + offset, z * scale_factor + offset] for x, y, z in zigzag]
+
+    structures = [octagon[:8], line[:8], cube[:8], zigzag[:8]]
+    
+    return structures
+
+def add_noise_to_structure(structure, std=0.01):
+    noisy_structure = []
+    for xyz0 in structure:
+        xyz1 = np.array(xyz0) + np.random.randn(3) * std
+        xyz1 = xyz1 % 1.0  # 座標を0~1の範囲にシフトして、周期境界条件を適用
+        noisy_structure.append(xyz1)
+    return noisy_structure
 
 class SigmaScheduler(nn.Module):
 

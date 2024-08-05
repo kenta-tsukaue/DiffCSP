@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
+from diffcsp.pl_modules.diff_utils import add_noise_to_structure, d_log_p_wrapped_normal, generate_crystal_structures
 
 MAX_ATOMIC_NUM=100
 
@@ -80,22 +80,92 @@ class CSPDiffusion(BaseModule):
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
         self.keep_lattice = False #self.hparams.cost_lattice < 1e-5
         self.keep_coords = False #self.hparams.cost_coord < 1e-5
+    
+    def replace_batch(self, batch, device='cuda'):
+        structures = generate_crystal_structures()
+        
+        batch_size = batch.num_graphs
+        
+        num_structures = 4
+        num_repeats = batch_size // num_structures
+
+        all_frac_coords = []
+        all_atom_types = []
+        all_edge_index = []
+        all_to_jimages = []
+        all_num_atoms = []
+        all_batch = []
+        all_ptr = [0]
+        
+        for i in range(batch_size):
+            struct_idx = i % num_structures
+            cell0 = structures[struct_idx]
+            noisy_structure = add_noise_to_structure(cell0)
+            
+            frac_coords = torch.tensor(noisy_structure, device=device, dtype=batch.frac_coords.dtype)
+            atom_types = torch.full((8,), 6, device=device, dtype=batch.atom_types.dtype)
+            
+            # Generate edge_index (complete graph for 8 nodes)
+            edge_index = torch.tensor([[i, j] for i in range(8) for j in range(8) if i != j], dtype=torch.long, device=device).t().contiguous()
+            
+            # Generate to_jimages (set to zero for simplicity)
+            to_jimages = torch.zeros((56, 3), dtype=batch.to_jimages.dtype, device=device)
+            
+            all_frac_coords.append(frac_coords)
+            all_atom_types.append(atom_types)
+            all_edge_index.append(edge_index + 8 * i)  # Offset for global indexing
+            all_to_jimages.append(to_jimages)
+            all_num_atoms.append(8)
+            all_batch.extend([i] * 8)
+            all_ptr.append(all_ptr[-1] + 8)
+        
+        batch.edge_index = torch.cat(all_edge_index, dim=1).to(device=device, dtype=batch.edge_index.dtype)
+        batch.frac_coords = torch.cat(all_frac_coords, dim=0).to(device=device, dtype=batch.frac_coords.dtype)
+        batch.atom_types = torch.cat(all_atom_types, dim=0).to(device=device, dtype=batch.atom_types.dtype)
+        batch.num_atoms = torch.tensor(all_num_atoms, device=device, dtype=batch.num_atoms.dtype)
+        batch.num_nodes = batch_size * 8
+        batch.batch = torch.tensor(all_batch, dtype=torch.long, device=device)
+        batch.ptr = torch.tensor(all_ptr, dtype=torch.long, device=device)
+        
+        # Set lengths and angles to unit vectors
+        batch.lengths = torch.ones((batch_size, 3), device=device, dtype=batch.lengths.dtype)
+        batch.angles = torch.full((batch_size, 3), 90.0, device=device, dtype=batch.angles.dtype)
+        
+        # Handle to_jimages
+        batch.to_jimages = torch.cat(all_to_jimages, dim=0).to(device=device, dtype=batch.to_jimages.dtype)
+        
+        # num_bonds is same as num_atoms in this context
+        batch.num_bonds = torch.tensor(all_num_atoms, device=device, dtype=batch.num_bonds.dtype)
+        
+        # Add num_graphs attribute
+        batch.num_graphs = batch_size
+
+        return batch
 
     def forward(self, batch):
-        """
+        #print(batch.batch)
+        
         print(batch)
-        print("================[batch.y]===============\n",batch.y)
+        #print("================[batch.y]===============\n",batch.y)
+        #print("================[batch.frac_coords]===============\n",batch.frac_coords)
+        #rint("================[batch.atom_types]===============\n",batch.atom_types)
+        #print("================[batch.lengths]===============\n",batch.lengths)
+        #print("================[batch.angles]===============\n",batch.angles)
+        #print("================[batch.to_jimages]===============\n",batch.to_jimages)
+        #print("================[batch.num_atoms]===============\n",batch.num_atoms)
+        #print("================[batch.num_bonds]===============\n",batch.num_bonds)
+        #print("================[batch.num_nodes]===============\n",batch.num_nodes)
+        
+        #batch = self.replace_batch(batch)
+        """print("================[batch.y]===============\n",batch.y)
         print("================[batch.frac_coords]===============\n",batch.frac_coords)
         print("================[batch.atom_types]===============\n",batch.atom_types)
-        for i in range(len(batch.atom_types)):
-            print(batch.atom_types[i])
         print("================[batch.lengths]===============\n",batch.lengths)
         print("================[batch.angles]===============\n",batch.angles)
         print("================[batch.to_jimages]===============\n",batch.to_jimages)
         print("================[batch.num_atoms]===============\n",batch.num_atoms)
         print("================[batch.num_bonds]===============\n",batch.num_bonds)
-        print("================[batch.num_nodes]===============\n",batch.num_nodes)
-        """
+        print("================[batch.num_nodes]===============\n",batch.num_nodes)"""
         
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
@@ -110,12 +180,12 @@ class CSPDiffusion(BaseModule):
 
         sigmas = self.sigma_scheduler.sigmas[times]
         sigmas_norm = self.sigma_scheduler.sigmas_norm[times]
-        
 
         lattices = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
         frac_coords = batch.frac_coords
 
         rand_l, rand_x = torch.randn_like(lattices), torch.randn_like(frac_coords)
+
 
         input_lattice = c0[:, None, None] * lattices + c1[:, None, None] * rand_l
         sigmas_per_atom = sigmas.repeat_interleave(batch.num_atoms)[:, None]
@@ -130,6 +200,9 @@ class CSPDiffusion(BaseModule):
             input_lattice = lattices"""
 
         pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+
+        #print(pred_x)
+
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
@@ -150,6 +223,7 @@ class CSPDiffusion(BaseModule):
     @torch.no_grad()
     def sample(self, batch, step_lr = 1e-5):
 
+        batch = self.replace_batch(batch)
         batch_size = batch.num_graphs
 
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)

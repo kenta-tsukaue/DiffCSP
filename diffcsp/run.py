@@ -130,20 +130,6 @@ def run(cfg: DictConfig) -> None:
 
     # Logger instantiation/configuration
     wandb_logger = None
-    """if "wandb" in cfg.logging:
-        hydra.utils.log.info("Instantiating <WandbLogger>")
-        wandb_config = cfg.logging.wandb
-        wandb_logger = WandbLogger(
-            **wandb_config,
-            settings=wandb.Settings(start_method="fork"),
-            tags=cfg.core.tags,
-        )
-        hydra.utils.log.info("W&B is now watching <{cfg.logging.wandb_watch.log}>!")
-        wandb_logger.watch(
-            model,
-            log=cfg.logging.wandb_watch.log,
-            log_freq=cfg.logging.wandb_watch.log_freq,
-        )"""
 
     # Store the YaML config separately into the wandb dir
     yaml_conf: str = OmegaConf.to_yaml(cfg=cfg)
