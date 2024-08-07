@@ -22,8 +22,8 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import calculate_del1_delc, calculate_del1_delm, calculate_del2_delc, calculate_del2_delm, calculate_delI_delc_delc_delx_t, calculate_delI_delm_delm_delx_t, calculate_dellogp_delx_t, calculate_delx_t, d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives,  calculate_y_squared, check_sol_2, generate_tables, find_best_fit, calculate_I
-from diffcsp.pl_modules.chksol_1 import check_sol
+from diffcsp.pl_modules.diff_utils import calculate_del1_delc, calculate_del1_delm, calculate_del2_delc, calculate_del2_delm, calculate_delI_delc_delc_delx_t, calculate_delI_delm_delm_delx_t, calculate_dellogp_delx_t, calculate_dellogp_delx_t_with_all_flow, calculate_delx_t, d_log_p_wrapped_normal, d2_log_p_wrapped_normal, calculate_derivatives,  calculate_y_squared, check_sol_2, generate_tables, find_best_fit, calculate_I
+from diffcsp.pl_modules.chksol_1 import calculate_partial_derivative_I_with_respect_to_m_and_c, check_sol, calculate_derivative_of_m
 MAX_ATOMIC_NUM=100
 
 
@@ -189,7 +189,7 @@ class CSPDiffusion(BaseModule):
         input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
         # Compute derivatives
-        epsilon = 1e-2
+        epsilon = 1e-5
         input_frac_coords = input_frac_coords.detach().clone()
         derivatives = torch.zeros_like(input_frac_coords)
 
@@ -284,62 +284,16 @@ class CSPDiffusion(BaseModule):
             step_size = step_lr * (sigma_x / self.sigma_scheduler.sigma_begin) ** 2
             # step_size = step_lr / (sigma_norm * (self.sigma_scheduler.sigma_begin) ** 2)
             std_x = torch.sqrt(2 * step_size)
-
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch) #スコア算出
-            _, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch)
+            #_, pred_x_d2 = self.decoder_d2(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch)
+            pred_x_d2 = torch.full(pred_x.shape, -1/sigma_x, device=pred_x.device) # -1/sigmaを使用
 
-            #新しい方法でmとcを求める
-            s1_table, s2_table, m_values, c_values = generate_tables(x_t)
-            m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
-            #print("m", m.shape, m)
-            #print("c", c.shape, c)
-        
-            # yを求める
-            y = calculate_y_squared(batch.num_atoms, batch)
-            I = calculate_I(batch.num_atoms, batch, m, c)
-            #print("y",y.shape, y)
-            #print("I", I.shape, I)
-
-            # ∂(1)/∂m, ∂(1)/∂cを求める
-            del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
-            del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
-
-            #print("del1_delm", del1_delm.shape, del1_delm)
-            #print("del1_delc", del1_delc.shape, del1_delc)
-
-            # ∂(2)/∂m, ∂(2)/∂cを求める
-            del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
-            del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
-
-            #print("del2_delm", del2_delm.shape, del2_delm)
-            #print("del2_delc", del2_delc.shape, del2_delc)
-
-
-            # ∂m/∂x_t, ∂c/x_tを求める   
-            delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
-
-            #print(delm_delx)
-            #print(delc_delx)
-            #print("delm_delx", delm_delx.shape, delm_delx)
-            #print("delc_delx", delc_delx.shape, delc_delx)
-
-            # ∂I/∂x_tを求める
-            delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
-            delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
-
-            print("delI_delm_delm_delx_t", delI_delm_delm_delx_t.shape, delI_delm_delm_delx_t[0][0][0][0])
-            print("delI_delc_delc_delx_t", delI_delc_delc_delx_t.shape, delI_delc_delc_delx_t[0][0][0][0])
-
-            dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delm_delm_delx_t, batch.num_atoms, sigma=0.5)
-
-            print("dellogp_delx_t", dellogp_delx_t.shape, dellogp_delx_t)
-
-
-            #dy = torch.tensor(dy).to('cuda').type(pred_x.dtype)
             pred_x = pred_x * torch.sqrt(sigma_norm)
+            print(pred_x)
+            dellogp_delx_t = calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch)
 
-            #x_t_minus_05 = x_t - step_size * ( pred_x + dy ) + std_x * rand_x
-            x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
+            x_t_minus_05 = x_t - step_size * ( pred_x + dellogp_delx_t ) + std_x * rand_x
+            #x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x
             x_t_minus_05 = x_t_minus_05
 
             l_t_minus_05 = l_t
@@ -354,10 +308,12 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt((adjacent_sigma_x ** 2 * (sigma_x ** 2 - adjacent_sigma_x ** 2)) / (sigma_x ** 2))   
 
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
-            
-            pred_x = pred_x * torch.sqrt(sigma_norm)
+            dellogp_delx_t = calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch)
 
-            x_t_minus_1 = x_t_minus_05 - step_size * pred_x + std_x * rand_x
+            pred_x = pred_x * torch.sqrt(sigma_norm)
+            print(pred_x)
+
+            x_t_minus_1 = x_t_minus_05 - step_size * (pred_x + dellogp_delx_t) + std_x * rand_x
 
             l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l
 
@@ -455,3 +411,74 @@ class CSPDiffusion(BaseModule):
     
     
     
+"""sampleのデバッグのコード
+            #新しい方法でmとcを求める
+            s1_table, s2_table, m_values, c_values = generate_tables(x_t)
+            m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
+            
+            # 微分の確認
+            #delta = 1e-5
+            #derivative_of_m, derivative_of_c = calculate_derivative_of_m(x_t, delta, generate_tables, pred_x, pred_x_d2, sigma_x, find_best_fit)
+            #print("Derivative of m with respect to x_t:", derivative_of_m)
+            #print("Derivative of c with respect to x_t:", derivative_of_c)               
+
+            #print("m", m.shape, m)
+            #print("c", c.shape, c)
+        
+            # yを求める
+            y = calculate_y_squared(batch.num_atoms, batch)
+            I = calculate_I(batch.num_atoms, batch, m, c)
+
+            # ∂I/∂m, ∂I/∂cの確認
+            delta = 1e-3
+            derivative_of_I_m, derivative_of_I_c = calculate_partial_derivative_I_with_respect_to_m_and_c(batch, m, c, delta, calculate_I)
+            #print("derivative_of_I_m", derivative_of_I_m.shape, '\n', derivative_of_I_m[0][0][0][0])
+            print("derivative_of_I_c", derivative_of_I_c.shape, '\n', derivative_of_I_c[0][0][0][0])
+            
+            #print("y",y.shape, y)
+            #print("I", I.shape, I)
+
+            # ∂(1)/∂m, ∂(1)/∂cを求める
+            del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
+            del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
+
+            #print("del1_delm", del1_delm.shape, del1_delm)
+            #print("del1_delc", del1_delc.shape, del1_delc)
+
+            # ∂(2)/∂m, ∂(2)/∂cを求める
+            del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
+            del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
+
+            #print("del2_delm", del2_delm.shape, del2_delm)
+            #print("del2_delc", del2_delc.shape, del2_delc)
+
+
+            # ∂m/∂x_t, ∂c/x_tを求める   
+            delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
+            #print("delm_delx", delm_delx.shape, delm_delx)
+            #print("delc_delx", delc_delx.shape, delc_delx)
+            with open('output_delm_delc.txt', 'w') as f:
+                # ファイルオブジェクトのwriteメソッドを使用して書き込む
+                 # ファイルオブジェクトのwriteメソッドを使用して書き込む
+                f.write(f"delta:\n{delta}")
+                f.write(f"\nDerivative of m with respect to x_t:\n{derivative_of_m}")
+                f.write(f"\nDerivative of c with respect to x_t:\n{derivative_of_c}")
+                f.write(f"\ndelm_delx: \n{delm_delx.shape, delm_delx}")
+                f.write(f"\ndelc_delx: \n{delc_delx.shape, delc_delx}")
+
+            # ∂I/∂x_tを求める
+            delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
+            delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
+
+            delI_delx_t = delI_delm_delm_delx_t + delI_delc_delc_delx_t
+
+            #print("delI_delm_delm_delx_t", delI_delm_delm_delx_t.shape, "\n", delI_delm_delm_delx_t[0][0][0][0])
+            #print("delI_delc_delc_delx_t", delI_delc_delc_delx_t.shape, "\n", delI_delc_delc_delx_t[0][0][0][0])
+            #print("delI_delx_t", delI_delx_t.shape, "\n", delI_delx_t[0][0][0][0])
+
+            dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delx_t, batch.num_atoms, sigma=sigma_x)
+            dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
+            max_abs_value = dellogp_delx_t.abs().max()
+            dellogp_delx_t = dellogp_delx_t / (max_abs_value * 2)
+            print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
+"""

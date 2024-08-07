@@ -16,7 +16,7 @@ tolerance: 0.1
 
 use_space_group: false
 use_pos_index: false
-train_max_epochs: 4000
+train_max_epochs: 40000 # default 40000
 early_stopping_patience: 100000
 teacher_forcing_max_epoch: 1000
 
@@ -78,4 +78,4 @@ datamodule:
   batch_size:
     train: 256
     val: 256
-    test: 1
+    test: 32
