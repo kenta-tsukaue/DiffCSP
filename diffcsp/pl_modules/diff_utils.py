@@ -810,7 +810,7 @@ def generate_crystal_structures():
     zigzag = [[(x + 1) / 2, (y + 1) / 2, (z + 0.25) * 2] for z in [-0.25, 0.25] for x, y in zip(np.arange(-3 / 8, 0.5, 1 / 4), [-1 / 8, 1 / 8] * 2)]
     zigzag = [[x * scale_factor + offset, y * scale_factor + offset, z * scale_factor + offset] for x, y, z in zigzag]
 
-    structures = [octagon[:8], line[:8], cube[:8], zigzag[:8]]
+    structures = [octagon[:8], line[:8]] * 5000
     
     return structures
 

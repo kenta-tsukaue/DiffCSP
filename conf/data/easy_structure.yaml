@@ -26,7 +26,7 @@ datamodule:
 
   datasets:
     train:
-      _target_: pl_data.dataset.DiamondDataset
+      _target_: pl_data.dataset.EadyStructureDataset
       name: Formation energy train
       path: ${data.root_path}/train.csv
       save_path: ${data.root_path}/train_ori.pt
@@ -39,10 +39,9 @@ datamodule:
       use_pos_index: ${data.use_pos_index}
       lattice_scale_method: ${data.lattice_scale_method}
       preprocess_workers: ${data.preprocess_workers}
-      pickle_path: ${data.root_path}/diamond_6000K.pickle
 
     val:
-      - _target_: pl_data.dataset.DiamondDataset
+      - _target_: pl_data.dataset.EadyStructureDataset
         name: Formation energy val
         path: ${data.root_path}/val.csv
         save_path: ${data.root_path}/val_ori.pt
@@ -55,10 +54,9 @@ datamodule:
         use_pos_index: ${data.use_pos_index}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
-        pickle_path: ${data.root_path}/diamond_6000K.pickle
 
     test:
-      - _target_: pl_data.dataset.DiamondDataset
+      - _target_: pl_data.dataset.EadyStructureDataset
         name: Formation energy test
         path: ${data.root_path}/test.csv
         save_path: ${data.root_path}/test_ori.pt
@@ -71,7 +69,6 @@ datamodule:
         use_pos_index: ${data.use_pos_index}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
-        pickle_path: ${data.root_path}/diamond_6000K.pickle
 
   num_workers:
     train: 0
