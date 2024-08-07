@@ -145,27 +145,16 @@ class CSPDiffusion(BaseModule):
     def forward(self, batch):
         #print(batch.batch)
         
-        print(batch)
+        #print(batch)
         #print("================[batch.y]===============\n",batch.y)
         #print("================[batch.frac_coords]===============\n",batch.frac_coords)
-        #rint("================[batch.atom_types]===============\n",batch.atom_types)
+        #print("================[batch.atom_types]===============\n",batch.atom_types)
         #print("================[batch.lengths]===============\n",batch.lengths)
         #print("================[batch.angles]===============\n",batch.angles)
         #print("================[batch.to_jimages]===============\n",batch.to_jimages)
         #print("================[batch.num_atoms]===============\n",batch.num_atoms)
         #print("================[batch.num_bonds]===============\n",batch.num_bonds)
         #print("================[batch.num_nodes]===============\n",batch.num_nodes)
-        
-        #batch = self.replace_batch(batch)
-        """print("================[batch.y]===============\n",batch.y)
-        print("================[batch.frac_coords]===============\n",batch.frac_coords)
-        print("================[batch.atom_types]===============\n",batch.atom_types)
-        print("================[batch.lengths]===============\n",batch.lengths)
-        print("================[batch.angles]===============\n",batch.angles)
-        print("================[batch.to_jimages]===============\n",batch.to_jimages)
-        print("================[batch.num_atoms]===============\n",batch.num_atoms)
-        print("================[batch.num_bonds]===============\n",batch.num_bonds)
-        print("================[batch.num_nodes]===============\n",batch.num_nodes)"""
         
         batch_size = batch.num_graphs
         times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
@@ -237,7 +226,7 @@ class CSPDiffusion(BaseModule):
 
         batch_size = batch.num_graphs
         #times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
-        times = torch.full((batch_size,), 1, device=self.device)
+        times = torch.full((batch_size,), 100, device=self.device)
 
     
         time_emb = self.time_embedding(times)
