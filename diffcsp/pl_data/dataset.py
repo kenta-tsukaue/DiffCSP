@@ -146,7 +146,7 @@ class DiamondDataset(Dataset):
         to_jimages = torch.LongTensor(np.zeros((edge_indices.shape[1], 3)))
 
         # yのプレースホルダー（スコア）
-        y = torch.Tensor(self.data[2][index]).view(1, -1)
+        y = torch.Tensor(self.data[2][index])#.view(1, -1)
         
         data = Data(
             frac_coords=torch.Tensor(frac_coords),

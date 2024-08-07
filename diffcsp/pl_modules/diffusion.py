@@ -219,6 +219,90 @@ class CSPDiffusion(BaseModule):
             'loss_lattice' : loss_lattice,
             'loss_coord' : loss_coord
         }
+    
+    @torch.no_grad()
+    def check_score(self, batch):
+        #print(batch.batch)
+        
+        #print(batch)
+        #print("================[batch.y]===============\n",batch.y)
+        #print("================[batch.frac_coords]===============\n",batch.frac_coords)
+        #rint("================[batch.atom_types]===============\n",batch.atom_types)
+        #print("================[batch.lengths]===============\n",batch.lengths)
+        #print("================[batch.angles]===============\n",batch.angles)
+        #print("================[batch.to_jimages]===============\n",batch.to_jimages)
+        #print("================[batch.num_atoms]===============\n",batch.num_atoms)
+        #print("================[batch.num_bonds]===============\n",batch.num_bonds)
+        #print("================[batch.num_nodes]===============\n",batch.num_nodes)
+
+        batch_size = batch.num_graphs
+        #times = self.beta_scheduler.uniform_sample_t(batch_size, self.device)
+        times = torch.full((batch_size,), 1, device=self.device)
+
+    
+        time_emb = self.time_embedding(times)
+
+        alphas_cumprod = self.beta_scheduler.alphas_cumprod[times]
+        beta = self.beta_scheduler.betas[times]
+
+        c0 = torch.sqrt(alphas_cumprod)
+        c1 = torch.sqrt(1. - alphas_cumprod)
+
+        sigmas = self.sigma_scheduler.sigmas[times]
+        sigmas_norm = self.sigma_scheduler.sigmas_norm[times]
+
+        lattices = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
+        frac_coords = batch.frac_coords
+
+        rand_l, rand_x = torch.randn_like(lattices), torch.randn_like(frac_coords)
+
+
+        input_lattice = c0[:, None, None] * lattices + c1[:, None, None] * rand_l
+        sigmas_per_atom = sigmas.repeat_interleave(batch.num_atoms)[:, None]
+        sigmas_norm_per_atom = sigmas_norm.repeat_interleave(batch.num_atoms)[:, None]
+        input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
+
+        # 一時的
+        input_frac_coords = frac_coords
+        pred_l, pred_x = self.decoder(time_emb, batch.atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+
+        tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
+
+        print("予測スコア\n", pred_x)
+        print("真のスコア\n", batch.y)
+        print("wrapped normalから算出されたスコア : ∇logF(x_t|x_0)\n", tar_x)
+
+
+        #loss_lattice = F.mse_loss(pred_l, rand_l)
+        loss_coord = F.mse_loss(pred_x, tar_x)
+
+        #print("loss_lattice", loss_lattice)
+        print("loss_coord", loss_coord)
+
+        pred_x_flat = pred_x.flatten()
+        batch_y_flat = batch.y.flatten()
+        tar_x_flat = tar_x.flatten()
+
+        pred_x_flat_np = pred_x_flat.to('cpu').numpy()
+        batch_y_flat_np = batch_y_flat.to('cpu').numpy()
+        tar_x_flat_np = tar_x_flat.to('cpu').numpy()
+
+        # Save the numpy arrays to files
+        pred_x_flat_filename = 'pred_x_flat.npy'
+        batch_y_flat_filename = 'batch_y_flat.npy'
+        tar_x_flat_filename = 'tar_x_flat.npy'
+        
+
+        np.save(pred_x_flat_filename, pred_x_flat_np)
+        np.save(batch_y_flat_filename, batch_y_flat_np)
+        np.save(tar_x_flat_filename, tar_x_flat_np)
+
+        """
+        ・　結晶の平均構造を求める
+        ・　平均構造のスコアを求める
+        ・　そのスコアが最小になっているかどうかを求める
+
+        """
 
     @torch.no_grad()
     def sample(self, batch, step_lr = 1e-5):
