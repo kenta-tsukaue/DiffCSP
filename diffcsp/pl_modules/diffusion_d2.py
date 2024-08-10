@@ -289,7 +289,7 @@ class CSPDiffusion(BaseModule):
             pred_x_d2 = torch.full(pred_x.shape, -1/sigma_x, device=pred_x.device) # -1/sigmaを使用
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
-            print(pred_x)
+            #print(pred_x)
             dellogp_delx_t = calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch)
 
             x_t_minus_05 = x_t - step_size * ( pred_x + dellogp_delx_t ) + std_x * rand_x

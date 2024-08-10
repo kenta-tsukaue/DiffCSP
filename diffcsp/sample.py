@@ -133,7 +133,7 @@ def run(cfg: DictConfig) -> None:
     yaml_conf: str = OmegaConf.to_yaml(cfg=cfg)
     (hydra_dir / "hparams.yaml").write_text(yaml_conf)
 
-    ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-07-19/train_d1_32/epoch=3999-step=96000.ckpt"
+    ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-08-07/train_d1_41/epoch=17064-step=682600.ckpt"
 
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint['state_dict'])
@@ -147,6 +147,7 @@ def run(cfg: DictConfig) -> None:
         batch = batch.to("cuda")
         print(f"Test Batch {batch_idx + 1}: {batch}")
         if batch_idx == 0:
+            #traj, traj_stack = model.sample_new_method(batch)
             traj, traj_stack = model.sample(batch)
             # Save traj and batch to files
             torch.save(traj, 'traj.pt')

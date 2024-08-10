@@ -166,3 +166,5 @@ runs/
 clean/
 
 *.out
+
+logs/

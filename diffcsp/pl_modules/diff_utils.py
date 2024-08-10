@@ -12,6 +12,8 @@ from scipy.misc import derivative
 from diffcsp.pl_modules.chksol_1 import loss_function_sol
 from scipy.special import erf
 from scipy.constants import pi
+import torch.multiprocessing as mp
+
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
@@ -303,10 +305,10 @@ def calculate_s2(m, c, x_t):
 
 def generate_tables(x_t):
     x_t_cpu = x_t.cpu().detach().numpy()
-    #m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
+    m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
     #c_values = np.arange(1e-2, 2 + 1/10, 1/10)
-    m_values = np.arange(-0.5, 0.5 + 1/20, 1/5000)
-    c_values = np.arange(1e-2, 2e-2, 1)
+    #m_values = np.arange(-0.5, 0.5 + 1/20, 1/5000)
+    c_values = np.arange(1e-2, 2e-2, 1.0)
 
     n, d = x_t_cpu.shape
     s1_table = np.zeros((n, d, len(m_values), len(c_values)))
@@ -322,7 +324,7 @@ def generate_tables(x_t):
     return s1_table, s2_table, m_values, c_values
  
 
-def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+"""def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
     n, d, m_len, c_len = s1_table.shape
     m = np.zeros((n, d))
     c = np.zeros((n, d))
@@ -344,6 +346,67 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
             c[i, j] = c_table[lmin]
             #print("m[i,j]", m[i,j])
             #print(i, j, errmin)
+    return m, c"""
+
+def calculate_error(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue):
+    # s1_table, s2_table, score1, score2は既にテンソルであるため、そのまま計算
+    s1 = s1_table[i, j, :, :]
+    s2 = s2_table[i, j, :, :]
+    
+    # errもテンソルとして計算
+    err = (sigma2 * score1[i, j] - s1) ** 2 + (sigma4 * score2[i, j] + sigma2 - s2) ** 2
+    
+    # errが既にテンソルなので、そのままargminを使用
+    min_idx = torch.argmin(err)
+    kmin, lmin = divmod(min_idx.item(), s1.shape[1])
+    
+    # m_tableとc_tableの値を取り出し、結果をキューに格納
+    result_queue.put((i, j, m_table[kmin].item(), c_table[lmin].item()))
+
+def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+    if not isinstance(s1_table, torch.Tensor):
+        s1_table = torch.tensor(s1_table).to(sigma.device)
+    if not isinstance(s2_table, torch.Tensor):
+        s2_table = torch.tensor(s2_table).to(sigma.device)
+    if not isinstance(m_table, torch.Tensor):
+        m_table = torch.tensor(m_table).to(sigma.device)
+    if not isinstance(c_table, torch.Tensor):
+        c_table = torch.tensor(c_table).to(sigma.device)
+
+    s1_table = s1_table.cpu()
+    s2_table = s2_table.cpu()
+    m_table = m_table.cpu()
+    c_table = c_table.cpu()
+    score1 = score1.cpu()
+    score2 = score2.cpu()
+    sigma2 = sigma.cpu() ** 2
+    sigma4 = sigma.cpu() ** 4
+
+    n, d, m_len, c_len = s1_table.shape
+    
+    m = torch.zeros((n, d), device=sigma.device)
+    c = torch.zeros((n, d), device=sigma.device)
+
+    result_queue = mp.Queue()
+    processes = []
+
+    for i in range(n):
+        for j in range(d):
+            p = mp.Process(target=calculate_error, args=(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue))
+            p.start()
+            processes.append(p)
+    
+    for p in processes:
+        p.join()
+
+    while not result_queue.empty():
+        i, j, m_val, c_val = result_queue.get()
+        m[i, j] = m_val
+        c[i, j] = c_val
+
+    m = m.cpu()
+    c = c.cpu()
+    
     return m, c
 
 def I_hkl(k, A_m, A_c):
@@ -408,7 +471,7 @@ def calculate_I(num_atoms, batch, m, c):
     return Z
 
 
-def calculate_delI_delm_delm_delx_t(num_atoms, batch, m, c, delm_delx_t):
+def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
 
@@ -424,8 +487,8 @@ def calculate_delI_delm_delm_delx_t(num_atoms, batch, m, c, delm_delx_t):
     for I in range(num_crystals):
         start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
         end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
-        frac_coords_m = m[start_index:end_index]
-        frac_coords_c = c[start_index:end_index]
+        frac_coords_m = m_tensor[start_index:end_index]
+        frac_coords_c = c_tensor[start_index:end_index]
         delm_coords = delm_delx_t[start_index:end_index]
         
         n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
@@ -444,13 +507,13 @@ def calculate_delI_delm_delm_delx_t(num_atoms, batch, m, c, delm_delx_t):
                             r_m = np.dot(diff_m, K)
                             r_c = np.dot(sum_c, K**2)
                             temp_result = -4 * np.pi * K * np.sin(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            #result[i] += temp_result * delm_coords[i] 
-                            result[i] += temp_result #一旦∂I/∂mを求める
+                            result[i] += temp_result * delm_coords[i] 
+                            # result[i] += temp_result #一旦∂I/∂mを求める
                     Z[I, a, b, c, :n_atoms, :] = result
 
     return Z
 
-def calculate_delI_delc_delc_delx_t(num_atoms, batch, m, c, delc_delx_t):
+def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_delx_t):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
 
@@ -466,8 +529,8 @@ def calculate_delI_delc_delc_delx_t(num_atoms, batch, m, c, delc_delx_t):
     for I in range(num_crystals):
         start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
         end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
-        frac_coords_m = m[start_index:end_index]
-        frac_coords_c = c[start_index:end_index]
+        frac_coords_m = m_tensor[start_index:end_index]
+        frac_coords_c = c_tensor[start_index:end_index]
         delc_coords = delc_delx_t[start_index:end_index]
         
         n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
@@ -487,8 +550,8 @@ def calculate_delI_delc_delc_delx_t(num_atoms, batch, m, c, delc_delx_t):
                             r_m = np.dot(diff_m, K)
                             r_c = np.dot(sum_c, K_squared)
                             temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            #result[i] += temp_result * delc_coords[i]
-                            result[i] += temp_result
+                            result[i] += temp_result * delc_coords[i]
+                            # result[i] += temp_result
                     Z[I, a, b, c, :n_atoms, :] = result
     return Z
 
@@ -705,36 +768,67 @@ def calculate_delx_t(m1, m2, c1, c2, s1, s2):
     return delm_delx, delc_delx
 
 def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch):
+    # print("start")
     #新しい方法でmとcを求める
     s1_table, s2_table, m_values, c_values = generate_tables(x_t)
+    #print("1")
     m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
+    #print("2")
 
     # yとIを求める
+    #print("3")
     y = calculate_y_squared(batch.num_atoms, batch) # 真の値
+    #print("4")
     I = calculate_I(batch.num_atoms, batch, m, c) # ノイズが加わった際の値
+    #print("5")
 
     # ∂(1)/∂m, ∂(1)/∂cを求める
     del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
+    #print("6")
     del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
+    #print("7")
 
     # ∂(2)/∂m, ∂(2)/∂cを求める
     del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
+    #print("8")
     del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
+    #print("9")
 
     # ∂m/∂x_t, ∂c/x_tを求める   
     delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
+    #print("10")
 
     # ∂I/∂x_tを求める
     delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
+    #print("11")
     delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
+    #print("12")
 
     delI_delx_t = delI_delm_delm_delx_t + delI_delc_delc_delx_t
 
     dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delx_t, batch.num_atoms, sigma=sigma_x)
+    #print("13")
     dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
-    max_abs_value = pred_x.abs().max()
-    dellogp_delx_t = dellogp_delx_t / (max_abs_value * 10)
+    #print("14")
+    batch_size = dellogp_delx_t.size(0) // 8  # バッチサイズを計算
+    dellogp_delx_t = dellogp_delx_t.view(batch_size, 8, 3)  # 8x3に分割
+    pred_x = pred_x.view(batch_size, 8, 3)  # pred_x も 8x3 に分割
+
+    # dellogp_delx_tの各セットの最大絶対値を計算
+    max_abs_values_dellogp = dellogp_delx_t.abs().max(dim=1, keepdim=True)[0]
+
+    # pred_xの各セットの最大絶対値を計算
+    max_abs_values_pred = pred_x.abs().max(dim=1, keepdim=True)[0]
+
+    # pred_xの最大値の半分がdellogp_delx_tの最大値になるようにスケーリング
+    scaling_factors = max_abs_values_pred / 1 / max_abs_values_dellogp
+    dellogp_delx_t = dellogp_delx_t * scaling_factors
+
+    # テンソルを元の形状 (n, 3) に戻す
+    dellogp_delx_t = dellogp_delx_t.view(-1, 3)
     #print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
+    #print("end")
+    #print(dellogp_delx_t)
     return dellogp_delx_t
 
 
@@ -810,7 +904,32 @@ def generate_crystal_structures():
     zigzag = [[(x + 1) / 2, (y + 1) / 2, (z + 0.25) * 2] for z in [-0.25, 0.25] for x, y in zip(np.arange(-3 / 8, 0.5, 1 / 4), [-1 / 8, 1 / 8] * 2)]
     zigzag = [[x * scale_factor + offset, y * scale_factor + offset, z * scale_factor + offset] for x, y, z in zigzag]
 
-    structures = [octagon[:8], line[:8]] * 5000
+    structures = [octagon[:8], line[:8], cube[:8], zigzag[:8]] * 2500
+    
+    return structures
+
+def generate_crystal_structures_2():
+    scale_factor = 0.6
+    offset = 0.5 * (1 - scale_factor)
+
+    r1 = np.sqrt(0.5) * scale_factor
+
+    # 直線 (line)
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-4, 4)]
+    line = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+
+    real_sample = [
+        [0.3860, 0.9456, 0.0327],
+        [0.7741, 0.7231, 0.9265],
+        [0.1471, 0.4678, 0.2544],
+        [0.1106, 0.3939, 0.5340],
+        [0.3488, 0.8717, 0.3123],
+        [0.5989, 0.3739, 0.0893],
+        [0.7224, 0.6159, 0.6402],
+        [0.8970, 0.9656, 0.4775]
+    ]
+
+    structures = [line[:8], real_sample] * 5000
     
     return structures
 

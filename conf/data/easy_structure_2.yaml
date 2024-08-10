@@ -26,7 +26,7 @@ datamodule:
 
   datasets:
     train:
-      _target_: pl_data.dataset.EasyStructureDataset
+      _target_: pl_data.dataset.EasyStructureDataset_2
       name: Formation energy train
       path: ${data.root_path}/train.csv
       save_path: ${data.root_path}/train_ori.pt
@@ -41,7 +41,7 @@ datamodule:
       preprocess_workers: ${data.preprocess_workers}
 
     val:
-      - _target_: pl_data.dataset.EasyStructureDataset
+      - _target_: pl_data.dataset.EasyStructureDataset_2
         name: Formation energy val
         path: ${data.root_path}/val.csv
         save_path: ${data.root_path}/val_ori.pt
@@ -56,7 +56,7 @@ datamodule:
         preprocess_workers: ${data.preprocess_workers}
 
     test:
-      - _target_: pl_data.dataset.EasyStructureDataset
+      - _target_: pl_data.dataset.EasyStructureDataset_2
         name: Formation energy test
         path: ${data.root_path}/test.csv
         save_path: ${data.root_path}/test_ori.pt
