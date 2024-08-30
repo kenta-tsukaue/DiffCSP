@@ -37,19 +37,52 @@ def complex_sum(k, A):
 
     return result
 
+def complex_sum_squared(k, A):
+    """
+    3次元ベクトル k と (n x 3) の行列 A を受け取り、
+    |F(h,k,l)|^2 = sum_j sum_k exp{2 * pi * I [(x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l]}
+    を計算する関数。
+
+    Parameters:
+    k (np.ndarray): 3次元ベクトル
+    A (np.ndarray): (n x 3) の行列
+
+    Returns:
+    float: 複素数の和の絶対値の2乗
+    """
+    i = complex(0, 1)
+    pi = np.pi
+
+    # CUDAテンソルをCPUに移動させてNumPy配列に変換
+    if isinstance(A, torch.Tensor):
+        A = A.cpu().numpy()
+
+    # 行数を取得
+    n = A.shape[0]
+
+    # 絶対値の2乗の和を計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            diff = A[j] - A[m]
+            r = np.dot(diff, k)
+            result += np.exp(2 * pi * i * r)
+
+    # 和の絶対値の2乗を計算
+    return result
+
 def visualize_complex_sum(A, num_atoms):
     # kの範囲設定
-    k1_values = np.arange(-2, 2, 1)
-    k2_values = np.arange(-2, 2, 1)
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
     # 結果を格納する配列
     Z = np.zeros((len(k1_values), len(k2_values)))
-    print(Z)
 
     # k1とk2を動かしてcomplex_sumの値を計算
     for i, k1 in enumerate(k1_values):
         for j, k2 in enumerate(k2_values):
-            k = np.array([k1, k2, 0])
-            Z[i, j] = np.abs(complex_sum(k, A))
+            k = np.array([-2, k1, k2])
+            Z[i, j] = np.abs(complex_sum_squared(k, A))
 
     print(Z)
 
@@ -68,7 +101,7 @@ def visualize_complex_sum(A, num_atoms):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d2_sample_gradual/batch.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/d1_43_17/batch.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
     print(loaded_batch)
 
@@ -94,7 +127,7 @@ def main():
         structure = Structure(lattice, first_atom_types, first_frac_coords)
 
         # 結晶構造を可視化
-        #visualize_structure(structure)  # 可視化関数を呼び出し
+        visualize_structure(structure)  # 可視化関数を呼び出し
 
         # Fを計算
         visualize_complex_sum(first_frac_coords, num_atoms)

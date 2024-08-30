@@ -31,7 +31,7 @@ def visualize_structure_plotly(structure):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d2_sample_gradual/traj.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/d1_43_21/traj.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
     #print(loaded_batch)
 
@@ -45,12 +45,13 @@ def main():
         # i番目の結晶のデータを抽出
         first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
         print(first_frac_coords)
+        m = loaded_batch['m'][start_index:end_index]
+        print(m)
         first_atom_types = loaded_batch['atom_types'][start_index:end_index]
         lattice = loaded_batch['lattices'][i]
-        print(lattice)
 
         # pymatgenのStructureオブジェクトを作成
-        structure = Structure(lattice, first_atom_types, first_frac_coords)
+        structure = Structure(lattice, first_atom_types, m)
 
         # 結晶構造を可視化
         visualize_structure(structure)  # 可視化関数を呼び出し
