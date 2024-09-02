@@ -168,3 +168,5 @@ clean/
 *.out
 
 logs/
+
+.DS_Store

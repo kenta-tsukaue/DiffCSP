@@ -91,158 +91,6 @@ def d2_log_p_wrapped_normal(x, sigma, N=10, T=1.0):
     """
     return d2_log_p
 
-
-def p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    p_ = torch.zeros_like(x,device=x.device)
-    for i in range(-N, N+1):
-        p_ = p_ + torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
-    return p_
-
-def log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    sum_exp = torch.zeros_like(x,device=x.device)
-    for i in range(-N, N+1):
-        sum_exp = sum_exp + torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
-    log_p = torch.log(sum_exp)
-    return log_p
-
-def d_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    p_ = torch.zeros_like(x,device=x.device)
-    for i in range(-N, N+1):
-        p_ = p_ + (x + T * i) / sigma ** 2 * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
-    return p_ / p_wrapped_normal_sampling(x, sigma, N, T)
-
-def d_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    dp_ = torch.zeros_like(x,device=x.device)
-    for i in range(-N, N+1):
-        dp_ = dp_ + (-(x + T * i) / (sigma ** 2)) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
-    return dp_
-
-def d2_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    d2p_ = torch.zeros_like(x,device=x.device)
-    for i in range(-N, N+1):
-        d2p_ = d2p_ + (((x + T * i)**2 / (sigma**4)) - (1 / (sigma**2))) * torch.exp(-(x + T * i) ** 2 / (2 * sigma ** 2))
-    return d2p_
-
-def d2_log_p_wrapped_normal_sampling(x, sigma, N=10, T=1.0):
-    p = p_wrapped_normal_sampling(x, sigma, N, T)
-    dp = d_p_wrapped_normal_sampling(x, sigma, N, T)
-    d2p = d2_p_wrapped_normal_sampling(x, sigma, N, T)
-    d2_log_p = (d2p * p - dp**2) / p**2
-    return d2_log_p
-
-# フーリエ係数の計算関数(an)
-def compute_fourier_an(n, sigma, N=10, T=1.0, num_points=1000):
-    device = "cpu"  # sigmaのデバイスを取得
-    x = torch.linspace(0, T, num_points, device=device)
-    dx = T / num_points
-    f_x = log_p_wrapped_normal_sampling(x, sigma, N, T)
-    cos_term = torch.cos(2 * torch.pi * n * x)
-    integral = torch.sum(f_x * cos_term) * dx
-    a_n = 2 * integral
-    return a_n
-
-def compute_fourier_bn(n, sigma, N=10, T=1.0, num_points=1000):
-    device = "cpu"
-    x = torch.linspace(0, T, num_points, device=device)
-    dx = T / num_points
-    f_x = d_log_p_wrapped_normal_sampling(x, sigma, N, T) ** 2 + d2_log_p_wrapped_normal_sampling(x, sigma, N, T)
-    if n == 0:
-        cos_term = torch.ones_like(x)
-    else:
-        cos_term = torch.cos(2 * torch.pi * n * x)
-    integral = torch.sum(f_x * cos_term) * dx
-    b_n = integral if n == 0 else 2 * integral
-    return b_n
-
-def loss_function_scipy(params, x_t, a_n_values, b_n_values, target1, target2):
-    m = params[:x_t.size].reshape(x_t.shape)
-    c = params[x_t.size:].reshape(x_t.shape)
-
-    exp_terms = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms = np.clip(exp_terms, 1e-32, 1e32)
-
-    sum_expr_1 = np.sum(a_n_values * np.sin(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms, axis=0)
-
-    exp_terms_b = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms_b = np.clip(exp_terms_b, 1e-32, 1e32)
-
-    sum_expr_2 = b_n_values[0] / 2 + np.sum(b_n_values[1:] * np.cos(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms_b, axis=0)
-
-    # target1 と target2 を numpy array に変換
-    target1_np = target1.cpu().detach().numpy()
-    target2_np = target2.cpu().detach().numpy()
-
-    loss = ((sum_expr_1 - target1_np) ** 2 + (sum_expr_2 - target2_np) ** 2).sum()
-    #print("total_loss", loss)
-    #print("sum_expr_1_loss", ((sum_expr_1 - target1_np) ** 2).sum())
-    #print("sum_expr_2_loss", ((sum_expr_2 - target2_np) ** 2).sum())
-
-    return loss
-
-# 最適化関数の定義
-def optimize_mc(x_t, sigma, target1, target2, iterations=20):
-    # ロスを記録するリスト
-    loss_history = []
-
-    # コールバック関数の定義
-    def callback(params):
-        iteration = len(loss_history) + 1
-        m = params[:x_t.numel()].reshape(x_t.shape)
-        c = params[x_t.numel():].reshape(x_t.shape)
-        loss = loss_function_scipy(params, x_t_cpu, a_n_values, b_n_values, target1, target2)
-        loss_history.append(loss)
-        if iteration % 50 == 0:
-            print(f"Iteration {iteration}, Current loss: {loss}")
-    
-    x_t_cpu = x_t.cpu().detach().numpy()
-    sigma_cpu = sigma.cpu().detach().numpy()
-    initial_m = np.ones_like(x_t_cpu) * 0.5
-    initial_c = np.ones_like(x_t_cpu) * 0.001
-    initial_params = np.concatenate([initial_m.flatten(), initial_c.flatten()])
-    a_n_values = np.stack([compute_fourier_an(n, sigma_cpu) for n in range(1, 6)], axis=0).reshape(-1, 1, 1)
-    b_n_values = np.stack([compute_fourier_bn(n, sigma_cpu) for n in range(0, 6)], axis=0).reshape(-1, 1, 1)
-
-    lower_bound_c = 1e-32  # cの下限を設定
-    bounds = [(None, None)] * x_t_cpu.size + [(lower_bound_c, None)] * x_t_cpu.size
-
-    """result = minimize(loss_function_scipy, initial_params, args=(x_t_cpu, a_n_values, b_n_values, target1, target2), 
-                  method='TNC', bounds=bounds, options={'maxiter': iterations, 'ftol': 1e-9}, callback=callback)"""
-    result = minimize(loss_function_scipy, initial_params, args=(x_t_cpu, a_n_values, b_n_values, target1, target2), 
-                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations}, callback=callback)
-    """result = minimize(loss_function_sol, initial_params, args=(x_t_cpu, sigma_cpu, target1, target2), 
-                      method='L-BFGS-B', bounds=bounds, options={'maxiter': iterations}, callback=callback)"""
-    #L-BFGS-B
-    optimized_params = result.x
-    m_optimized = optimized_params[:x_t_cpu.size].reshape(x_t_cpu.shape)
-    c_optimized = optimized_params[x_t_cpu.size:].reshape(x_t_cpu.shape)
-
-    return m_optimized, c_optimized
-
-def check_sol_2(m, c, x_t, sigma, target1, target2, sol_1, sol_2):
-    sigma_cpu = sigma.cpu().detach().numpy()
-    a_n_values = np.stack([compute_fourier_an(n, sigma_cpu) for n in range(1, 6)], axis=0).reshape(-1, 1, 1)
-    b_n_values = np.stack([compute_fourier_bn(n, sigma_cpu) for n in range(0, 6)], axis=0).reshape(-1, 1, 1)
-    exp_terms = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms = np.clip(exp_terms, 1e-32, 1e32)
-
-    sum_expr_1 = np.sum(a_n_values * np.sin(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms, axis=0)
-
-    exp_terms_b = np.exp(-(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1)) ** 2 * c / 2)
-    exp_terms_b = np.clip(exp_terms_b, 1e-32, 1e32)
-
-    sum_expr_2 = b_n_values[0] / 2 + np.sum(b_n_values[1:] * np.cos(2 * np.pi * np.arange(1, 6).reshape(-1, 1, 1) * m) * exp_terms_b, axis=0)
-
-    print("==================[target1=================\n", target1)
-    print("==================[sum_expr_1]=================\n", sum_expr_1)
-    print("==================[sol_1]=================\n", sol_1)
-    print("==================[target2]=================\n", target2)
-    print("==================[sum_expr_2]=================\n", sum_expr_2)
-    print("==================[sol_2]=================\n", sol_2)
-    print("==================[m]=================\n", m)
-    print("==================[c]=================\n", c)
-    
-
-
 # target1 と target2 を計算する関数
 def calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, num_atoms, batch):
     pred_l, pred_x = decoder(time_emb, atom_types, x_t, l_t, num_atoms, batch)
@@ -251,32 +99,8 @@ def calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, num_a
     target2 = pred_x_d2 + pred_x ** 2
     return target1, target2
 
-def calculate_derivatives(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, num_atoms, batch, sigma, iterations=1000):
-    target1, target2 = calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_t, l_t, num_atoms, batch)
-    m_optimized, c_optimized = optimize_mc(x_t, sigma, target1, target2, iterations)
 
-    def optimized_m(x):
-        x_tensor = torch.tensor(x, dtype=torch.float32, device=x_t.device)
-        target1, target2 = calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_tensor, l_t, num_atoms, batch)
-        return optimize_mc(x_tensor, sigma, target1, target2, iterations)[0]
-
-    def optimized_c(x):
-        x_tensor = torch.tensor(x, dtype=torch.float32, device=x_t.device)
-        target1, target2 = calculate_targets(decoder, decoder_d2, time_emb, atom_types, x_tensor, l_t, num_atoms, batch)
-        return optimize_mc(x_tensor, sigma, target1, target2, iterations)[1]
-
-    x_t_cpu = x_t.cpu().detach().numpy()  # x_t を CPU に移動させて NumPy 配列に変換
-    dm_dx_t = derivative(optimized_m, x_t_cpu, dx=1e-2)
-    dc_dx_t = derivative(optimized_c, x_t_cpu, dx=1e-2)
-
-    return m_optimized, c_optimized, dm_dx_t, dc_dx_t
-
-
-"""
-=======================================
-最新手法 m, c の計算 & table作成
-=======================================
-"""
+# m, c の計算 & table作成
 def calculate_s1(m, c, x_t):
     k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
     xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
@@ -322,48 +146,22 @@ def generate_tables(x_t):
             s2_table[:, :, i, j] = s2_results
     
     return s1_table, s2_table, m_values, c_values
- 
 
-"""def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
-    n, d, m_len, c_len = s1_table.shape
-    m = np.zeros((n, d))
-    c = np.zeros((n, d))
-
-    for i in range(n):
-        for j in range(d):
-            errmin = float('inf')
-            kmin = 0
-            lmin = 0
-            for im in range(m_len):
-                for ic in range(c_len):
-                    s1 = s1_table[i, j, im, ic]
-                    s2 = s2_table[i, j, im, ic]
-                    err = (sigma**2 * score1[i, j] - s1)**2 + (sigma**4 * score2[i, j] + sigma**2 - s2)**2
-                    if err < errmin:
-                        kmin, lmin = im, ic
-                        errmin = err
-            m[i, j] = m_table[kmin]
-            c[i, j] = c_table[lmin]
-            #print("m[i,j]", m[i,j])
-            #print(i, j, errmin)
-    return m, c"""
-
-def calculate_error(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue):
-    # s1_table, s2_table, score1, score2は既にテンソルであるため、そのまま計算
-    s1 = s1_table[i, j, :, :]
-    s2 = s2_table[i, j, :, :]
+def calculate_batch_error(batch, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table):
+    results = []
+    for (i, j) in batch:
+        s1 = s1_table[i, j, :, :]
+        s2 = s2_table[i, j, :, :]
+        
+        err = (sigma2 * score1[i, j] - s1) ** 2 + (sigma4 * score2[i, j] + sigma2 - s2) ** 2
+        min_idx = torch.argmin(err)
+        kmin, lmin = divmod(min_idx.item(), s1.shape[1])
+        
+        results.append((i, j, m_table[kmin], c_table[lmin]))
     
-    # errもテンソルとして計算
-    err = (sigma2 * score1[i, j] - s1) ** 2 + (sigma4 * score2[i, j] + sigma2 - s2) ** 2
-    
-    # errが既にテンソルなので、そのままargminを使用
-    min_idx = torch.argmin(err)
-    kmin, lmin = divmod(min_idx.item(), s1.shape[1])
-    
-    # m_tableとc_tableの値を取り出し、結果をキューに格納
-    result_queue.put((i, j, m_table[kmin].item(), c_table[lmin].item()))
+    return results
 
-def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma, num_workers=4):
     if not isinstance(s1_table, torch.Tensor):
         s1_table = torch.tensor(s1_table).to(sigma.device)
     if not isinstance(s2_table, torch.Tensor):
@@ -384,31 +182,28 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
 
     n, d, m_len, c_len = s1_table.shape
     
-    m = torch.zeros((n, d), device=sigma.device)
-    c = torch.zeros((n, d), device=sigma.device)
+    m = torch.zeros((n, d), dtype=sigma.dtype, device=sigma.device)
+    c = torch.zeros((n, d), dtype=sigma.dtype, device=sigma.device)
 
-    result_queue = mp.Queue()
-    processes = []
-
-    for i in range(n):
-        for j in range(d):
-            p = mp.Process(target=calculate_error, args=(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue))
-            p.start()
-            processes.append(p)
+    # (i, j) の組み合わせをすべて列挙
+    tasks = [(i, j) for i in range(n) for j in range(d)]
     
-    for p in processes:
-        p.join()
+    # タスクをバッチに分割
+    batch_size = max(1, len(tasks) // num_workers)
+    batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
 
-    while not result_queue.empty():
-        i, j, m_val, c_val = result_queue.get()
-        m[i, j] = m_val
-        c[i, j] = c_val
-
-    m = m.cpu()
-    c = c.cpu()
+    with mp.Pool(processes=num_workers) as pool:
+        results = pool.starmap(calculate_batch_error, [(batch, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table) for batch in batches])
     
-    return m, c
+    # 結果を m と c に反映
+    for batch_results in results:
+        for i, j, m_val, c_val in batch_results:
+            m[i, j] = m_val
+            c[i, j] = c_val
+    
+    return m.cpu(), c.cpu()
 
+# あるhklにおいての構造因子の値を出す
 def I_hkl(k, A_m, A_c):
     """
     3次元ベクトル k と (n x 3) の行列 A_m, A_c を受け取り、
@@ -447,7 +242,9 @@ def I_hkl(k, A_m, A_c):
 
     return result.real
 
-def calculate_I(num_atoms, batch, m, c):
+
+# 予測されるm, cから構造因子を算出する
+def calculate_I( batch, m, c):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     # kの範囲設定
     k1_values = np.arange(-2, 3, 1)
@@ -470,7 +267,29 @@ def calculate_I(num_atoms, batch, m, c):
                     Z[I, j, l, n] = I_hkl(k, frac_coords_m, frac_coords_c)
     return Z
 
+def calculate_I_only_m( batch, m, c):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values)))
 
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m[start_index:end_index]
+        # k1とk2を動かしてcomplex_sumの値を計算
+        for j, k1 in enumerate(k1_values):
+            for l, k2 in enumerate(k2_values):
+                for n, k3 in enumerate(k3_values):
+                    k = np.array([k1, k2, k3])
+                    Z[I, j, l, n] = complex_sum_squared(k, frac_coords_m)
+    return Z
+
+# 予測される構造因子のx_t微分を算出(m微分より)
 def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
@@ -513,6 +332,8 @@ def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_d
 
     return Z
 
+
+# 予測される構造因子のx_t微分を算出(c微分より)
 def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_delx_t):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
@@ -555,6 +376,7 @@ def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_d
                     Z[I, a, b, c, :n_atoms, :] = result
     return Z
 
+# 条件スコアを算出
 def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5):
     # I, y: (n, 5, 5, 5)
     # delI: (n, 5, 5, 5, m, 3)
@@ -622,7 +444,8 @@ def complex_sum_squared(k, A):
     # 和の絶対値の2乗を計算
     return result
 
-def calculate_y_squared(num_atoms, batch):
+# 真の構造因子を算出
+def calculate_y(batch, c):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     # kの範囲設定
     k1_values = np.arange(-2, 3, 1)
@@ -641,9 +464,30 @@ def calculate_y_squared(num_atoms, batch):
             for l, k2 in enumerate(k2_values):
                 for m, k3 in enumerate(k3_values):
                     k = np.array([k1, k2, k3])
-                    Z[I, j, l, m] = complex_sum_squared(k, first_frac_coords)
+                    Z[I, j, l, m] = I_hkl(k, first_frac_coords, c)
+                    # Z[I, j, l, m] = complex_sum_squared(k, first_frac_coords)
+                    
+                    
     return Z
 
+# 真の構造因子と予測される構造因子の差を出す
+def calculate_loss(batch, traj, c):
+    batch_y = calculate_y(batch, c)
+    traj_y = calculate_y(traj, c)
+    
+    # Ensure the result is a torch tensor
+    if not isinstance(batch_y, torch.Tensor):
+        batch_y = torch.tensor(batch_y)
+    if not isinstance(traj_y, torch.Tensor):
+        traj_y = torch.tensor(traj_y)
+    
+    # RMSEの計算
+    mse = torch.nn.functional.mse_loss(batch_y, traj_y)
+    rmse = torch.sqrt(mse)
+    
+    return rmse.item()
+
+# cpuに送る
 def to_cpu(tensor):
     if isinstance(tensor, torch.Tensor):
         return tensor.cpu().numpy()
@@ -767,6 +611,66 @@ def calculate_delx_t(m1, m2, c1, c2, s1, s2):
     
     return delm_delx, delc_delx
 
+
+# 条件スコアのスケールを変更する
+def scale_dellogp_delx_t(batch, dellogp_delx_t, pred_x):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    final_result = []
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        dellogp_delx_t_per_crystal = dellogp_delx_t[start_index:end_index]
+        pred_x_per_crystal = pred_x[start_index:end_index]
+        
+        # dellogp_delx_t_per_crystalのスケーリング（絶対値の最大値でスケーリング）
+        max_dellogp = torch.max(torch.abs(dellogp_delx_t_per_crystal))
+        max_pred_x = torch.max(torch.abs(pred_x_per_crystal))
+        scaling_factor = max_pred_x / max_dellogp
+        scaled_dellogp_delx_t_per_crystal = dellogp_delx_t_per_crystal * scaling_factor
+
+        final_result.append(scaled_dellogp_delx_t_per_crystal)
+
+    # 結果をtorch.Tensorに変換
+    final_result = torch.cat(final_result, dim=0)
+    
+    # dtypeとdeviceをdellogp_delx_tに合わせる
+    final_result = final_result.to(dellogp_delx_t.dtype).to(dellogp_delx_t.device)
+
+    return final_result
+
+def scale_dellogp(dellogp_delx_t, pred_x, num_atoms):
+    # num_atoms をリストに変換
+    if isinstance(num_atoms, torch.Tensor):
+        num_atoms = num_atoms.tolist()
+    
+    # dellogp_delx_t と pred_x を num_atoms に基づいて分割
+    split_dellogp_delx_t = torch.split(dellogp_delx_t, num_atoms)
+    split_pred_x = torch.split(pred_x, num_atoms)
+
+    scaled_dellogp_delx_t_list = []
+
+    for dellogp, pred in zip(split_dellogp_delx_t, split_pred_x):
+        # dellogp_delx_t の各セットの最大絶対値を計算
+        max_abs_values_dellogp = dellogp.abs().max(dim=0, keepdim=True)[0]
+
+        # pred_x の各セットの最大絶対値を計算
+        max_abs_values_pred = pred.abs().max(dim=0, keepdim=True)[0]
+
+        # pred_x の最大値が dellogp_delx_t の最大値になるようにスケーリング
+        scaling_factors = max_abs_values_pred / max_abs_values_dellogp
+        scaled_dellogp = dellogp * scaling_factors
+
+        # スケーリングされたテンソルをリストに追加
+        scaled_dellogp_delx_t_list.append(scaled_dellogp)
+
+    # スケーリングされたテンソルを元の形状に結合
+    return torch.cat(scaled_dellogp_delx_t_list, dim=0)
+
+
+
+# スコアから条件スコアを算出する
 def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch):
     # print("start")
     #新しい方法でmとcを求める
@@ -777,10 +681,17 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
 
     # yとIを求める
     #print("3")
-    y = calculate_y_squared(batch.num_atoms, batch) # 真の値
+    # 真の構造因子
+    y = calculate_y(batch, c)
     #print("4")
-    I = calculate_I(batch.num_atoms, batch, m, c) # ノイズが加わった際の値
-    #print("5")
+    # m, cから予測される構造因子を求める
+    I = calculate_I(batch, m, c)
+    # I = calculate_I_only_m(batch, m, c)
+
+    print("真の構造因子(c使用)\n", y.shape, "\n", y[0][0])
+    # print("予測されるの構造因子(既存)\n", I.shape, "\n", I[0][0])
+    print("予測されるの構造因子(m, c使用)\n", I.shape, "\n", I[0][0])
+
 
     # ∂(1)/∂m, ∂(1)/∂cを求める
     del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
@@ -794,7 +705,7 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
     del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
     #print("9")
 
-    # ∂m/∂x_t, ∂c/x_tを求める   
+    # ∂m/∂x_t, ∂c/x_tを求める
     delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
     #print("10")
 
@@ -810,7 +721,10 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
     #print("13")
     dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
     #print("14")
-    batch_size = dellogp_delx_t.size(0) // 8  # バッチサイズを計算
+    dellogp_delx_t = scale_dellogp(dellogp_delx_t, pred_x, batch.num_atoms)
+    """
+    #この8は後々変える必要がある
+    batch_size = batch.num_graphs
     dellogp_delx_t = dellogp_delx_t.view(batch_size, 8, 3)  # 8x3に分割
     pred_x = pred_x.view(batch_size, 8, 3)  # pred_x も 8x3 に分割
 
@@ -821,7 +735,7 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
     max_abs_values_pred = pred_x.abs().max(dim=1, keepdim=True)[0]
 
     # pred_xの最大値の半分がdellogp_delx_tの最大値になるようにスケーリング
-    scaling_factors = max_abs_values_pred / 1 / max_abs_values_dellogp
+    scaling_factors = max_abs_values_pred / max_abs_values_dellogp
     dellogp_delx_t = dellogp_delx_t * scaling_factors
 
     # テンソルを元の形状 (n, 3) に戻す
@@ -829,7 +743,9 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
     #print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
     #print("end")
     #print(dellogp_delx_t)
-    return dellogp_delx_t
+    """
+
+    return dellogp_delx_t, m, c
 
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
@@ -964,3 +880,94 @@ class SigmaScheduler(nn.Module):
     def uniform_sample_t(self, batch_size, device):
         ts = np.random.choice(np.arange(1, self.timesteps+1), batch_size)
         return torch.from_numpy(ts).to(device)
+
+
+"""
+最適化前のm,cを求める式
+def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+    n, d, m_len, c_len = s1_table.shape
+    m = np.zeros((n, d))
+    c = np.zeros((n, d))
+
+    for i in range(n):
+        for j in range(d):
+            errmin = float('inf')
+            kmin = 0
+            lmin = 0
+            for im in range(m_len):
+                for ic in range(c_len):
+                    s1 = s1_table[i, j, im, ic]
+                    s2 = s2_table[i, j, im, ic]
+                    err = (sigma**2 * score1[i, j] - s1)**2 + (sigma**4 * score2[i, j] + sigma**2 - s2)**2
+                    if err < errmin:
+                        kmin, lmin = im, ic
+                        errmin = err
+            m[i, j] = m_table[kmin]
+            c[i, j] = c_table[lmin]
+            #print("m[i,j]", m[i,j])
+            #print(i, j, errmin)
+    return m, c
+"""
+
+"""
+m, c最適化 ver.2.0
+def calculate_error(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue):
+    # s1_table, s2_table, score1, score2は既にテンソルであるため、そのまま計算
+    s1 = s1_table[i, j, :, :]
+    s2 = s2_table[i, j, :, :]
+    
+    # errもテンソルとして計算
+    err = (sigma2 * score1[i, j] - s1) ** 2 + (sigma4 * score2[i, j] + sigma2 - s2) ** 2
+    
+    # errが既にテンソルなので、そのままargminを使用
+    min_idx = torch.argmin(err)
+    kmin, lmin = divmod(min_idx.item(), s1.shape[1])
+    
+    # m_tableとc_tableの値を取り出し、結果をキューに格納
+    result_queue.put((i, j, m_table[kmin].item(), c_table[lmin].item()))
+
+def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
+    if not isinstance(s1_table, torch.Tensor):
+        s1_table = torch.tensor(s1_table).to(sigma.device)
+    if not isinstance(s2_table, torch.Tensor):
+        s2_table = torch.tensor(s2_table).to(sigma.device)
+    if not isinstance(m_table, torch.Tensor):
+        m_table = torch.tensor(m_table).to(sigma.device)
+    if not isinstance(c_table, torch.Tensor):
+        c_table = torch.tensor(c_table).to(sigma.device)
+
+    s1_table = s1_table.cpu()
+    s2_table = s2_table.cpu()
+    m_table = m_table.cpu()
+    c_table = c_table.cpu()
+    score1 = score1.cpu()
+    score2 = score2.cpu()
+    sigma2 = sigma.cpu() ** 2
+    sigma4 = sigma.cpu() ** 4
+
+    n, d, m_len, c_len = s1_table.shape
+    
+    m = torch.zeros((n, d), device=sigma.device)
+    c = torch.zeros((n, d), device=sigma.device)
+
+    result_queue = mp.Queue()
+    processes = []
+
+    for i in range(n):
+        for j in range(d):
+            p = mp.Process(target=calculate_error, args=(i, j, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table, result_queue))
+            p.start()
+            processes.append(p)
+    
+    for p in processes:
+        p.join()
+
+    while not result_queue.empty():
+        i, j, m_val, c_val = result_queue.get()
+        m[i, j] = m_val
+        c[i, j] = c_val
+
+    m = m.cpu()
+    c = c.cpu()
+    
+    return m, c"""

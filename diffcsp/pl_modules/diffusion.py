@@ -22,7 +22,7 @@ from diffcsp.common.data_utils import (
     EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
     frac_to_cart_coords, min_distance_sqr_pbc)
 
-from diffcsp.pl_modules.diff_utils import add_noise_to_structure, d_log_p_wrapped_normal, generate_crystal_structures, calculate_dellogp_delx_t_with_all_flow
+from diffcsp.pl_modules.diff_utils import add_noise_to_structure, d_log_p_wrapped_normal, generate_crystal_structures, calculate_dellogp_delx_t_with_all_flow, calculate_loss
 
 MAX_ATOMIC_NUM=100
 
@@ -78,7 +78,7 @@ class CSPDiffusion(BaseModule):
         self.sigma_scheduler = hydra.utils.instantiate(self.hparams.sigma_scheduler)
         self.time_dim = self.hparams.time_dim
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
-        self.keep_lattice = False #self.hparams.cost_lattice < 1e-5
+        self.keep_lattice = True #self.hparams.cost_lattice < 1e-5
         self.keep_coords = False #self.hparams.cost_coord < 1e-5
     
     def replace_batch(self, batch, device='cuda'):
@@ -295,6 +295,7 @@ class CSPDiffusion(BaseModule):
 
     @torch.no_grad()
     def sample(self, batch, step_lr = 1e-5):
+        loss_list = []
         batch_size = batch.num_graphs
 
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)
@@ -346,8 +347,9 @@ class CSPDiffusion(BaseModule):
 
             step_size = step_lr * (sigma_x / self.sigma_scheduler.sigma_begin) ** 2
             # step_size = step_lr / (sigma_norm * (self.sigma_scheduler.sigma_begin) ** 2)
+            print(sigma_x)
             std_x = torch.sqrt(2 * step_size)
-
+            print(std_x)
             pred_l, pred_x = self.decoder(time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch)
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
@@ -363,6 +365,12 @@ class CSPDiffusion(BaseModule):
                 'lattices' : l_t_minus_1              
             }
 
+            c = torch.full((batch_size, 3), 0.01)
+
+            loss = calculate_loss(batch, traj[t - 1], c)
+            print(loss)
+            loss_list.append(loss)
+
         traj_stack = {
             'num_atoms' : batch.num_atoms,
             'atom_types' : batch.atom_types,
@@ -370,10 +378,11 @@ class CSPDiffusion(BaseModule):
             'all_lattices' : torch.stack([traj[i]['lattices'] for i in range(time_start, -1, -1)])
         }
 
-        return traj[0], traj_stack
+        return traj[0], traj_stack, loss_list
     
     @torch.no_grad()
     def sample_new_method(self, batch, step_lr = 1e-5):
+        loss_list = []
         batch_size = batch.num_graphs
 
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)
@@ -381,8 +390,9 @@ class CSPDiffusion(BaseModule):
         if self.keep_coords:
             x_T = batch.frac_coords
 
-        if self.keep_lattice:
-            l_T = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
+        #if self.keep_lattice:
+        #    l_T = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
+        l_T = lattice_params_to_matrix_torch(batch.lengths, batch.angles)
 
         time_start = self.beta_scheduler.timesteps
 
@@ -431,9 +441,10 @@ class CSPDiffusion(BaseModule):
             pred_x = pred_x * torch.sqrt(sigma_norm)
             pred_x_d2 = torch.full(pred_x.shape, -1/sigma_x, device=pred_x.device) # -1/sigmaを使用
             
-            dellogp_delx_t = calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch)
+            dellogp_delx_t, m, c = calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch)
 
-            x_t_minus_1 = x_t - step_size * (pred_x + dellogp_delx_t) + std_x * rand_x if not self.keep_coords else x_t
+            x_t_minus_1 = x_t - step_size * (pred_x + 3 * dellogp_delx_t) + std_x * rand_x if not self.keep_coords else x_t
+            # x_t_minus_1 = x_t - step_size * (pred_x - dellogp_delx_t) + std_x * rand_x if not self.keep_coords else x_t
 
             l_t_minus_1 = c0 * (l_t - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
 
@@ -441,8 +452,15 @@ class CSPDiffusion(BaseModule):
                 'num_atoms' : batch.num_atoms,
                 'atom_types' : batch.atom_types,
                 'frac_coords' : x_t_minus_1 % 1.,
-                'lattices' : l_t_minus_1              
+                'lattices' : l_t_minus_1,
+                'm': m              
             }
+            loss = calculate_loss(batch, traj[t - 1], c)
+            print(loss)
+            loss_list.append(loss)
+            if t % 100 == 0 or t == 0:
+                torch.save(traj[t - 1], f'traj_{t}.pt')
+                print("保存されました")
 
         traj_stack = {
             'num_atoms' : batch.num_atoms,
@@ -450,8 +468,9 @@ class CSPDiffusion(BaseModule):
             'all_frac_coords' : torch.stack([traj[i]['frac_coords'] for i in range(time_start, -1, -1)]),
             'all_lattices' : torch.stack([traj[i]['lattices'] for i in range(time_start, -1, -1)])
         }
+        
 
-        return traj[0], traj_stack
+        return traj[0], traj_stack, loss_list
     
     @torch.no_grad()
     def sample_pc(self, batch, step_lr = 1e-5):

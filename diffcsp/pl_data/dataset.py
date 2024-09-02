@@ -261,7 +261,7 @@ class EasyStructureDataset_2(Dataset):
     
 
     def __getitem__(self, index):
-        struct_idx = index % 2
+        struct_idx = 0 # index % 2
         cell0 = self.data[struct_idx]
         noisy_structure = add_noise_to_structure(cell0)
         frac_coords = torch.tensor(noisy_structure, dtype=torch.float32)
