@@ -1,0 +1,202 @@
+import os
+import numpy as np
+import torch
+from pymatgen.core.structure import Structure
+from pymatgen.core.lattice import Lattice
+from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
+import matplotlib.pyplot as plt
+
+
+def create_tlcon2o_crystals():
+    # 一つ目の結晶 TlCoN2O のデータ
+    lattice_params = {
+        "lengths": [4.24596403, 4.24596403, 4.24596403],
+        "angles": [90.00000000, 90.00000000, 90.00000000]
+    }
+    atom_types_1 = [27, 81, 7, 7, 8] 
+    # atom_types_1 = [27, 27, 27, 27, 27]
+    frac_coords_1 = [
+        [0.00265771, 0.00000000, 0.00000000],
+        [0.50015703, 0.50000000, 0.50000000],
+        [0.50108143, 0.00000000, 0.50000000],
+        [0.50108143, 0.50000000, 0.00000000],
+        [0.00050506, 0.50000000, 0.50000000]
+    ]
+
+    
+    # 二つ目の結晶 TlCoN2O のデータ (line配置)
+    scale_factor = 1.0  # 必要に応じてスケールを変更
+    offset = 0.0  # 必要に応じてオフセットを変更
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
+    frac_coords_2 = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+    atom_types_2 = [27, 81, 7, 7, 8]
+    
+    # データをTorchテンソルに変換してバッチに格納
+    loaded_batch = {
+        'frac_coords': torch.tensor(frac_coords_1 + frac_coords_2),
+        'atom_types': torch.tensor([atom_types_1, atom_types_2]),
+        'lengths': torch.tensor([lattice_params["lengths"],lattice_params["lengths"]]),
+        'angles': torch.tensor([lattice_params["angles"], lattice_params["angles"]]),
+        'num_atoms': torch.tensor([len(frac_coords_1), len(frac_coords_2)]),
+    }
+
+    return loaded_batch
+
+
+def visualize_structure_with_matplotlib(structure):
+    """
+    結晶構造をmatplotlibで可視化する関数
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # 原子の位置をプロット
+    for site in structure:
+        # 各原子の位置をプロット
+        ax.scatter(site.frac_coords[0], site.frac_coords[1], site.frac_coords[2], 
+                   s=100, label=site.species_string, alpha=0.6)
+
+    # 座標軸のラベル設定
+    ax.set_xlabel('X Fractional Coordinate')
+    ax.set_ylabel('Y Fractional Coordinate')
+    ax.set_zlabel('Z Fractional Coordinate')
+    ax.set_title('Crystal Structure')
+
+    plt.show()
+
+cromer_mann_coefficients = {
+    27: {'a': [15.7924, 6.1253, 3.28719, 1.64550], 'b': [2.77200, 0.90200, 0.21700, 9.25200], 'c': 1.79131},
+    81: {'a': [29.2024, 15.1492, 14.5606, 5.98054], 'b': [1.14430, 10.0593, 0.21100, 27.0701], 'c': 13.4307},
+    7:  {'a': [12.2126, 3.13220, 2.01250, 1.16630], 'b': [0.00570, 9.89330, 28.9975, 0.58260], 'c': -11.529},
+    8:  {'a': [3.0485, 2.2868, 1.5463, 0.8670], 'b': [13.2771, 5.7011, 0.3239, 32.9089], 'c': 0.2508}
+}
+
+def calculate_q_magnitude(k_vector, lambda_wavelength=1.0):
+    # Ensure k_vector is a tuple
+    if isinstance(k_vector, list):
+        k_vector = tuple(k_vector)
+    
+    # Calculate the magnitude of the q vector from the k vector
+    return (2 * np.pi / lambda_wavelength) * np.linalg.norm(k_vector)
+
+def scattering_factor(atom_number, q):
+    
+    coefficients = cromer_mann_coefficients.get(atom_number.item())
+    if not coefficients:
+        raise ValueError(f"Atomic number {atom_number} not supported.")
+    
+    a = coefficients['a']
+    b = coefficients['b']
+    c = coefficients['c']
+    
+    f_q = sum([a[i] * np.exp(-b[i] * (q / (4 * np.pi)) ** 2) for i in range(4)]) + c
+    print(atom_number, f_q)
+    return f_q
+
+
+def complex_sum_squared_with_scattering_factors(k, A, atom_types):
+    """
+    3次元ベクトル k と (n x 3) の行列 A、および散乱因子のリスト f を受け取り、
+    I(hkl) = |F(hkl)|^2 を計算する関数。
+    F(hkl) = sum_j f_j * exp(2 * pi * i * (hx_j + ky_j + lz_j))
+    I(hkl) = sum_j sum_k f_j * f_k * exp(2 * pi * i * ((x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l))
+
+    Parameters:
+    k (np.ndarray): 3次元ベクトル (h, k, l)
+    A (np.ndarray): (n x 3) の行列 (原子の分率座標)
+    f (np.ndarray): (n) の配列 (原子の散乱因子)
+
+    Returns:
+    float: 回折強度 I(hkl)
+    """
+    i = complex(0, 1)
+    pi = np.pi
+
+    # CUDAテンソルをCPUに移動させてNumPy配列に変換
+    if isinstance(A, torch.Tensor):
+        A = A.cpu().numpy()
+
+    # 行数を取得
+    n = A.shape[0]
+
+    # 回折強度 I(hkl) の計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            f_j = scattering_factor(atom_types[j], calculate_q_magnitude(k))
+            f_m = scattering_factor(atom_types[m], calculate_q_magnitude(k))
+            diff = A[j] - A[m]
+            r = np.dot(diff, k)
+            result += f_j * f_m * np.exp(2 * pi * i * r)
+
+    # 結果の実部のみを返す
+    real_result = np.real(result)
+    print(real_result)
+    return real_result
+
+def visualize_complex_sum(A, num_atoms, atom_types):
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    # 結果を格納する配列
+    Z = np.zeros((len(k1_values), len(k2_values)))
+
+    # k1とk2を動かしてcomplex_sumの値を計算
+    for i, k1 in enumerate(k1_values):
+        for j, k2 in enumerate(k2_values):
+            k = np.array([-2, k1, k2])
+            Z[i, j] = complex_sum_squared_with_scattering_factors(k, A, atom_types)
+
+    print(Z)
+
+    # プロット
+    X, Y = np.meshgrid(k1_values, k2_values)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(X, Y, Z.T, cmap='viridis')
+
+    ax.set_xlabel('k1')
+    ax.set_ylabel('k2')
+    ax.set_zlabel(f'|complex_sum|')
+    ax.set_title(f'3D Plot of complex_sum /TlCoN2O')
+    plt.show()
+    
+
+def main():
+    # データの呼び出し、データをCPUにマッピング
+    loaded_batch = create_tlcon2o_crystals()
+    # 読み込んだデータを使用
+    print(loaded_batch)
+
+    num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
+
+    # バッチ内の全ての結晶に対してループ
+    for i in range(num_crystals):
+        start_index = sum(loaded_batch['num_atoms'][:i])  # i番目の結晶の開始インデックス
+        end_index = start_index + loaded_batch['num_atoms'][i]  # i番目の結晶の終了インデックス
+
+        # i番目の結晶のデータを抽出
+        first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
+        first_atom_types = loaded_batch['atom_types'][i]
+        first_lengths = loaded_batch['lengths'][i]
+        first_angles = loaded_batch['angles'][i]
+        num_atoms = loaded_batch['num_atoms'][i]
+
+        # Latticeオブジェクトを生成（格子パラメータから）
+        lattice = Lattice.from_parameters(first_lengths[0], first_lengths[1], first_lengths[2],
+                                          first_angles[0], first_angles[1], first_angles[2])
+
+        # pymatgenのStructureオブジェクトを作成
+        structure = Structure(lattice, first_atom_types, first_frac_coords)
+        print(structure)
+
+        # 結晶構造を可視化
+        #visualize_structure(structure)  # 可視化関数を呼び出し
+        visualize_structure_with_matplotlib(structure)
+
+        # Fを計算
+        visualize_complex_sum(first_frac_coords, num_atoms, first_atom_types)
+
+
+if __name__ == "__main__":
+    main()

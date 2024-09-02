@@ -140,7 +140,7 @@ def visualize_complex_sum(A, m, c, num_atoms):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d1_43_15/traj.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/sample_d1_43_101/traj.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
 
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
@@ -167,7 +167,7 @@ def main():
         print(first_frac_coords)
 
         # Fを計算
-        visualize_complex_sum(first_frac_coords, m, c, num_atoms)
+        # visualize_complex_sum(first_frac_coords, m, c, num_atoms)
 
 
 if __name__ == "__main__":
