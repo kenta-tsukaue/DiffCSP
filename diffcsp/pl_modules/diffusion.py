@@ -78,7 +78,7 @@ class CSPDiffusion(BaseModule):
         self.sigma_scheduler = hydra.utils.instantiate(self.hparams.sigma_scheduler)
         self.time_dim = self.hparams.time_dim
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
-        self.keep_lattice = True #self.hparams.cost_lattice < 1e-5
+        self.keep_lattice = False #self.hparams.cost_lattice < 1e-5
         self.keep_coords = False #self.hparams.cost_coord < 1e-5
     
     def replace_batch(self, batch, device='cuda'):
@@ -456,7 +456,7 @@ class CSPDiffusion(BaseModule):
                 'm': m              
             }
             loss = calculate_loss(batch, traj[t - 1], c)
-            print(loss)
+            print("回折強度損失:", loss)
             loss_list.append(loss)
             if t % 100 == 0 or t == 0:
                 torch.save(traj[t - 1], f'traj_{t}.pt')

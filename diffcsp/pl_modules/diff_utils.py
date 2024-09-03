@@ -1,3 +1,4 @@
+from datetime import datetime
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -13,6 +14,7 @@ from diffcsp.pl_modules.chksol_1 import loss_function_sol
 from scipy.special import erf
 from scipy.constants import pi
 import torch.multiprocessing as mp
+
 
 
 def cosine_beta_schedule(timesteps, s=0.008):
@@ -194,6 +196,8 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma, n
 
     with mp.Pool(processes=num_workers) as pool:
         results = pool.starmap(calculate_batch_error, [(batch, s1_table, s2_table, score1, score2, sigma2, sigma4, m_table, c_table) for batch in batches])
+        pool.close()  # プールを閉じる
+        pool.join()   # すべてのプロセスが終了するのを待つ
     
     # 結果を m と c に反映
     for batch_results in results:
@@ -205,19 +209,17 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma, n
 
 # あるhklにおいての構造因子の値を出す
 def I_hkl(k, A_m, A_c):
-    """
-    3次元ベクトル k と (n x 3) の行列 A_m, A_c を受け取り、
-    I(h,k,l) = sum_j sum_k exp{2 * pi * I [(m_j - m_k)・(h,k,l) - 2 * pi^2 (c_j + c_k)・(h^2, k^2, l^2)]}
-    を計算する関数。
+    #3次元ベクトル k と (n x 3) の行列 A_m, A_c を受け取り、
+    #I(h,k,l) = sum_j sum_k exp{2 * pi * I [(m_j - m_k)・(h,k,l) - 2 * pi^2 (c_j + c_k)・(h^2, k^2, l^2)]}
+    #を計算する関数。
 
-    Parameters:
-    k (np.ndarray): 3次元ベクトル (h, k, l)
-    A_m (np.ndarray): (n x 3) の行列 m_j
-    A_c (np.ndarray): (n x 3) の行列 c_j
+    # Parameters:
+    # k (np.ndarray): 3次元ベクトル (h, k, l)
+    # A_m (np.ndarray): (n x 3) の行列 m_j
+    # A_c (np.ndarray): (n x 3) の行列 c_j
 
-    Returns:
-    complex: 複素数の和
-    """
+    # Returns:
+    # complex: 複素数の和
     i = complex(0, 1)
     pi = np.pi
 
@@ -241,6 +243,7 @@ def I_hkl(k, A_m, A_c):
             result += np.exp(2 * pi * i * r_m - 2 * pi**2 * r_c)
 
     return result.real
+
 
 
 # 予測されるm, cから構造因子を算出する
@@ -267,6 +270,32 @@ def calculate_I( batch, m, c):
                     Z[I, j, l, n] = I_hkl(k, frac_coords_m, frac_coords_c)
     return Z
 
+# 真の構造因子を算出
+def calculate_y(batch, c):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values)))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        first_frac_coords = batch['frac_coords'][start_index:end_index]
+        # k1とk2を動かしてcomplex_sumの値を計算
+        for j, k1 in enumerate(k1_values):
+            for l, k2 in enumerate(k2_values):
+                for m, k3 in enumerate(k3_values):
+                    k = np.array([k1, k2, k3])
+                    Z[I, j, l, m] = I_hkl(k, first_frac_coords, c)
+                    # Z[I, j, l, m] = complex_sum_squared(k, first_frac_coords)
+                    
+                    
+    return Z
+
 def calculate_I_only_m( batch, m, c):
     num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
     # kの範囲設定
@@ -289,92 +318,145 @@ def calculate_I_only_m( batch, m, c):
                     Z[I, j, l, n] = complex_sum_squared(k, frac_coords_m)
     return Z
 
-# 予測される構造因子のx_t微分を算出(m微分より)
-def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t):
-    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
-    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
+def calculate_for_k_value_m(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delm_coords, num_atoms_max, n_atoms):
+    batch_results = []
+    for k1, k2, k3 in batch:
+        K = torch.tensor([k1, k2, k3], dtype=torch.float32, device='cpu')  # CPU上でテンソルを作成
+        result = torch.zeros((num_atoms_max, 3), dtype=torch.float32, device='cpu')  # CPU上でテンソルを作成
+        for i in range(n_atoms):
+            for j in range(n_atoms):
+                diff_m = frac_coords_m[i] - frac_coords_m[j]
+                sum_c = frac_coords_c[i] + frac_coords_c[j]
+                r_m = torch.dot(diff_m, K)
+                r_c = torch.dot(sum_c, K**2)
+                temp_result = -4 * np.pi * K * torch.sin(2 * np.pi * r_m) * torch.exp(-2 * np.pi**2 * r_c)
+                result[i] += temp_result * delm_coords[i]
+        batch_results.append((k1, k2, k3, result))
+    return batch_results
 
-    # kの範囲設定
+def calculate_for_k_value_c(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delc_coords, num_atoms_max, n_atoms):
+    batch_results = []
+    for k1, k2, k3 in batch:
+        K = torch.tensor([k1, k2, k3], dtype=torch.float32, device='cpu')  # CPU上でテンソルを作成
+        K_squared = K**2
+        result = torch.zeros((num_atoms_max, 3), dtype=torch.float32, device='cpu')  # CPU上でテンソルを作成
+        for i in range(n_atoms):
+            for j in range(n_atoms):
+                diff_m = frac_coords_m[i] - frac_coords_m[j]
+                sum_c = frac_coords_c[i] + frac_coords_c[j]
+                r_m = np.dot(diff_m, K)
+                r_c = np.dot(sum_c, K_squared)
+                temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+                result[i] += temp_result * delc_coords[i]
+        batch_results.append((k1, k2, k3, result))
+    return batch_results
+
+def calculate_for_crystal_m(I, k1_values, k2_values, k3_values, num_atoms, m_tensor, c_tensor, delm_delx_t, num_atoms_max):
+    start_index = sum(num_atoms[:I])
+    end_index = start_index + num_atoms[I]
+    frac_coords_m = m_tensor[start_index:end_index]
+    frac_coords_c = c_tensor[start_index:end_index]
+    delm_coords = delm_delx_t[start_index:end_index]
+    
+    n_atoms = frac_coords_m.shape[0]
+
+    Z = torch.zeros((len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3), dtype=torch.float32)
+
+    tasks = [(k1, k2, k3) for k1 in k1_values for k2 in k2_values for k3 in k3_values]
+    batch_size = max(1, len(tasks) // mp.cpu_count())
+    batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+
+    for batch in batches:
+        batch_results = calculate_for_k_value_m(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delm_coords, num_atoms_max, n_atoms)
+        for k1, k2, k3, result in batch_results:
+            a = np.where(k1_values == k1)[0][0]
+            b = np.where(k2_values == k2)[0][0]
+            c = np.where(k3_values == k3)[0][0]
+            Z[a, b, c, :n_atoms, :] = result
+    
+    return I, Z
+
+def calculate_for_crystal_c(I, k1_values, k2_values, k3_values, num_atoms, m_tensor, c_tensor, delc_delx_t, num_atoms_max):
+    start_index = sum(num_atoms[:I])
+    end_index = start_index + num_atoms[I]
+    frac_coords_m = m_tensor[start_index:end_index]
+    frac_coords_c = c_tensor[start_index:end_index]
+    delm_coords = delc_delx_t[start_index:end_index]
+    
+    n_atoms = frac_coords_m.shape[0]
+
+    Z = torch.zeros((len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3), dtype=torch.float32)
+
+    tasks = [(k1, k2, k3) for k1 in k1_values for k2 in k2_values for k3 in k3_values]
+    batch_size = max(1, len(tasks) // mp.cpu_count())
+    batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+
+    for batch in batches:
+        batch_results = calculate_for_k_value_c(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delm_coords, num_atoms_max, n_atoms)
+        for k1, k2, k3, result in batch_results:
+            a = np.where(k1_values == k1)[0][0]
+            b = np.where(k2_values == k2)[0][0]
+            c = np.where(k3_values == k3)[0][0]
+            Z[a, b, c, :n_atoms, :] = result
+    
+    return I, Z
+
+# 予測される構造因子のx_t微分を算出(m微分より)
+def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t, num_workers=4):
+    num_atoms = batch['num_atoms'].cpu()
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = max(num_atoms).cpu()
+    m_tensor = m_tensor.cpu()
+    c_tensor = c_tensor.cpu()
     k1_values = np.arange(-2, 3, 1)
     k2_values = np.arange(-2, 3, 1)
     k3_values = np.arange(-2, 3, 1)
+    
+    Z = torch.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3), dtype=torch.float32)
 
-    # 結果を格納する配列
-    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+    # 各結晶の処理を並列化
+    with mp.Pool(processes=num_workers) as pool:
+        results = pool.starmap(calculate_for_crystal_m, [(I, k1_values, k2_values, k3_values, num_atoms, m_tensor, c_tensor, delm_delx_t, num_atoms_max) for I in range(num_crystals)])
+        pool.close()  # プールを閉じる
+        pool.join()   # すべてのプロセスが終了するのを待つ
 
-    # バッチ内の全ての結晶に対してループ
-    for I in range(num_crystals):
-        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
-        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
-        frac_coords_m = m_tensor[start_index:end_index]
-        frac_coords_c = c_tensor[start_index:end_index]
-        delm_coords = delm_delx_t[start_index:end_index]
-        
-        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+    # 結果を統合
+    for I, Z_part in results:
+        Z[I] = Z_part
 
-        # k1とk2を動かして複素数の和を計算
-        for a, k1 in enumerate(k1_values):
-            for b, k2 in enumerate(k2_values):
-                for c, k3 in enumerate(k3_values):
-                    K = np.array([k1, k2, k3])
-                    # 計算を行う
-                    result = np.zeros((num_atoms_max, 3))
-                    for i in range(n_atoms):
-                        for j in range(n_atoms):
-                            diff_m = frac_coords_m[i] - frac_coords_m[j]
-                            sum_c = frac_coords_c[i] + frac_coords_c[j]
-                            r_m = np.dot(diff_m, K)
-                            r_c = np.dot(sum_c, K**2)
-                            temp_result = -4 * np.pi * K * np.sin(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            result[i] += temp_result * delm_coords[i] 
-                            # result[i] += temp_result #一旦∂I/∂mを求める
-                    Z[I, a, b, c, :n_atoms, :] = result
-
-    return Z
-
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.numpy()
+    
+    return Z_numpy
 
 # 予測される構造因子のx_t微分を算出(c微分より)
-def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_delx_t):
-    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
-    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
-
-    # kの範囲設定
+def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_delx_t, num_workers=4):
+    num_atoms = batch['num_atoms'].cpu()
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = max(num_atoms).cpu()
+    m_tensor = m_tensor.cpu()
+    c_tensor = c_tensor.cpu()
     k1_values = np.arange(-2, 3, 1)
     k2_values = np.arange(-2, 3, 1)
     k3_values = np.arange(-2, 3, 1)
+    
+    Z = torch.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3), dtype=torch.float32)
 
-    # 結果を格納する配列
-    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+    # 各結晶の処理を並列化
+    with mp.Pool(processes=num_workers) as pool:
+        results = pool.starmap(calculate_for_crystal_c, [(I, k1_values, k2_values, k3_values, num_atoms, m_tensor, c_tensor, delc_delx_t, num_atoms_max) for I in range(num_crystals)])
+        pool.close()  # プールを閉じる
+        pool.join()   # すべてのプロセスが終了するのを待つ
 
-    # バッチ内の全ての結晶に対してループ
-    for I in range(num_crystals):
-        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
-        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
-        frac_coords_m = m_tensor[start_index:end_index]
-        frac_coords_c = c_tensor[start_index:end_index]
-        delc_coords = delc_delx_t[start_index:end_index]
-        
-        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+    # 結果を統合
+    for I, Z_part in results:
+        Z[I] = Z_part
 
-        # k1とk2を動かして複素数の和を計算
-        for a, k1 in enumerate(k1_values):
-            for b, k2 in enumerate(k2_values):
-                for c, k3 in enumerate(k3_values):
-                    K = np.array([k1, k2, k3])
-                    K_squared = K**2  # 各要素の二乗からなる3次元ベクトル
-                    # 計算を行う
-                    result = np.zeros((num_atoms_max, 3))
-                    for i in range(n_atoms):
-                        for j in range(n_atoms):
-                            diff_m = frac_coords_m[i] - frac_coords_m[j]
-                            sum_c = frac_coords_c[i] + frac_coords_c[j]
-                            r_m = np.dot(diff_m, K)
-                            r_c = np.dot(sum_c, K_squared)
-                            temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-                            result[i] += temp_result * delc_coords[i]
-                            # result[i] += temp_result
-                    Z[I, a, b, c, :n_atoms, :] = result
-    return Z
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.numpy()
+    
+    return Z_numpy
+
 
 # 条件スコアを算出
 def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5):
@@ -444,31 +526,6 @@ def complex_sum_squared(k, A):
     # 和の絶対値の2乗を計算
     return result
 
-# 真の構造因子を算出
-def calculate_y(batch, c):
-    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
-    # kの範囲設定
-    k1_values = np.arange(-2, 3, 1)
-    k2_values = np.arange(-2, 3, 1)
-    k3_values = np.arange(-2, 3, 1)
-    # 結果を格納する配列
-    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values)))
-
-    # バッチ内の全ての結晶に対してループ
-    for I in range(num_crystals):
-        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
-        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
-        first_frac_coords = batch['frac_coords'][start_index:end_index]
-        # k1とk2を動かしてcomplex_sumの値を計算
-        for j, k1 in enumerate(k1_values):
-            for l, k2 in enumerate(k2_values):
-                for m, k3 in enumerate(k3_values):
-                    k = np.array([k1, k2, k3])
-                    Z[I, j, l, m] = I_hkl(k, first_frac_coords, c)
-                    # Z[I, j, l, m] = complex_sum_squared(k, first_frac_coords)
-                    
-                    
-    return Z
 
 # 真の構造因子と予測される構造因子の差を出す
 def calculate_loss(batch, traj, c):
@@ -669,81 +726,62 @@ def scale_dellogp(dellogp_delx_t, pred_x, num_atoms):
     return torch.cat(scaled_dellogp_delx_t_list, dim=0)
 
 
+def log_with_timestamp(message):
+    print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {message}")
+
 
 # スコアから条件スコアを算出する
 def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch):
-    # print("start")
-    #新しい方法でmとcを求める
+    # 新しい方法でmとcを求める
     s1_table, s2_table, m_values, c_values = generate_tables(x_t)
-    #print("1")
-    m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
-    #print("2")
+    # log_with_timestamp("1")
+
+    m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x, 8)
+    # log_with_timestamp("2")
 
     # yとIを求める
-    #print("3")
+    
     # 真の構造因子
     y = calculate_y(batch, c)
-    #print("4")
+    # log_with_timestamp("3")
+    
     # m, cから予測される構造因子を求める
     I = calculate_I(batch, m, c)
-    # I = calculate_I_only_m(batch, m, c)
+    # log_with_timestamp("4")
 
-    print("真の構造因子(c使用)\n", y.shape, "\n", y[0][0])
-    # print("予測されるの構造因子(既存)\n", I.shape, "\n", I[0][0])
-    print("予測されるの構造因子(m, c使用)\n", I.shape, "\n", I[0][0])
-
+    # print("真の構造因子(c使用)\n", y.shape, "\n", y[0][0])
+    # print("予測されるの構造因子(m, c使用)\n", I.shape, "\n", I[0][0])
 
     # ∂(1)/∂m, ∂(1)/∂cを求める
     del1_delm = calculate_del1_delm(m, c, sigma_x, x_t)
-    #print("6")
+    # log_with_timestamp("6")
     del1_delc = calculate_del1_delc(m, c, sigma_x, x_t)
-    #print("7")
+    # log_with_timestamp("7")
 
     # ∂(2)/∂m, ∂(2)/∂cを求める
     del2_delm = calculate_del2_delm(m, c, sigma_x, x_t)
-    #print("8")
+    # log_with_timestamp("8")
     del2_delc = calculate_del2_delc(m, c, sigma_x, x_t)
-    #print("9")
+    # log_with_timestamp("9")
 
     # ∂m/∂x_t, ∂c/x_tを求める
     delm_delx, delc_delx = calculate_delx_t(del1_delm, del2_delm, del1_delc, del2_delc, pred_x, pred_x_d2)
-    #print("10")
+    # log_with_timestamp("10")
 
     # ∂I/∂x_tを求める
-    delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx)
-    #print("11")
-    delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx)
-    #print("12")
+    delI_delm_delm_delx_t = calculate_delI_delm_delm_delx_t(batch.num_atoms, batch, m, c, delm_delx, 8)
+    # log_with_timestamp("11")
+    delI_delc_delc_delx_t = calculate_delI_delc_delc_delx_t(batch.num_atoms, batch, m, c, delc_delx, 8)
+    # log_with_timestamp("12")
 
     delI_delx_t = delI_delm_delm_delx_t + delI_delc_delc_delx_t
 
     dellogp_delx_t = calculate_dellogp_delx_t(I, y, delI_delx_t, batch.num_atoms, sigma=sigma_x)
-    #print("13")
+    # log_with_timestamp("13")
     dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
-    #print("14")
+    # log_with_timestamp("14")
     dellogp_delx_t = scale_dellogp(dellogp_delx_t, pred_x, batch.num_atoms)
-    """
-    #この8は後々変える必要がある
-    batch_size = batch.num_graphs
-    dellogp_delx_t = dellogp_delx_t.view(batch_size, 8, 3)  # 8x3に分割
-    pred_x = pred_x.view(batch_size, 8, 3)  # pred_x も 8x3 に分割
-
-    # dellogp_delx_tの各セットの最大絶対値を計算
-    max_abs_values_dellogp = dellogp_delx_t.abs().max(dim=1, keepdim=True)[0]
-
-    # pred_xの各セットの最大絶対値を計算
-    max_abs_values_pred = pred_x.abs().max(dim=1, keepdim=True)[0]
-
-    # pred_xの最大値の半分がdellogp_delx_tの最大値になるようにスケーリング
-    scaling_factors = max_abs_values_pred / max_abs_values_dellogp
-    dellogp_delx_t = dellogp_delx_t * scaling_factors
-
-    # テンソルを元の形状 (n, 3) に戻す
-    dellogp_delx_t = dellogp_delx_t.view(-1, 3)
-    #print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
-    #print("end")
-    #print(dellogp_delx_t)
-    """
+    # log_with_timestamp("15")
 
     return dellogp_delx_t, m, c
 
@@ -846,6 +884,28 @@ def generate_crystal_structures_2():
     ]
 
     structures = [line[:8], real_sample] * 5000
+    
+    return structures
+
+def generate_crystal_structures_3():
+    scale_factor = 0.6
+    offset = 0.5 * (1 - scale_factor)
+
+    r1 = np.sqrt(0.5) * scale_factor
+
+    # 直線 (line)
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
+    line = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+
+    real_sample = [
+        [0.00265771, 0.00000000, 0.00000000],
+        [0.50015703, 0.50000000, 0.50000000],
+        [0.50108143, 0.00000000, 0.50000000],
+        [0.50108143, 0.50000000, 0.00000000],
+        [0.00050506, 0.50000000, 0.50000000]
+    ]
+
+    structures = [line[:5], real_sample] * 5000
     
     return structures
 
@@ -971,3 +1031,152 @@ def find_best_fit(s1_table, s2_table, m_table, c_table, score1, score2, sigma):
     c = c.cpu()
     
     return m, c"""
+
+
+"""
+    #この8は後々変える必要がある
+    batch_size = batch.num_graphs
+    dellogp_delx_t = dellogp_delx_t.view(batch_size, 8, 3)  # 8x3に分割
+    pred_x = pred_x.view(batch_size, 8, 3)  # pred_x も 8x3 に分割
+
+    # dellogp_delx_tの各セットの最大絶対値を計算
+    max_abs_values_dellogp = dellogp_delx_t.abs().max(dim=1, keepdim=True)[0]
+
+    # pred_xの各セットの最大絶対値を計算
+    max_abs_values_pred = pred_x.abs().max(dim=1, keepdim=True)[0]
+
+    # pred_xの最大値の半分がdellogp_delx_tの最大値になるようにスケーリング
+    scaling_factors = max_abs_values_pred / max_abs_values_dellogp
+    dellogp_delx_t = dellogp_delx_t * scaling_factors
+
+    # テンソルを元の形状 (n, 3) に戻す
+    dellogp_delx_t = dellogp_delx_t.view(-1, 3)
+    #print("dellogp_delx_t", dellogp_delx_t.shape, "\n", dellogp_delx_t)
+    #print("end")
+    #print(dellogp_delx_t)
+    """
+
+"""def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
+
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m_tensor[start_index:end_index]
+        frac_coords_c = c_tensor[start_index:end_index]
+        delm_coords = delm_delx_t[start_index:end_index]
+        
+        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+
+        # k1とk2を動かして複素数の和を計算
+        for a, k1 in enumerate(k1_values):
+            for b, k2 in enumerate(k2_values):
+                for c, k3 in enumerate(k3_values):
+                    K = np.array([k1, k2, k3])
+                    # 計算を行う
+                    result = np.zeros((num_atoms_max, 3))
+                    for i in range(n_atoms):
+                        for j in range(n_atoms):
+                            diff_m = frac_coords_m[i] - frac_coords_m[j]
+                            sum_c = frac_coords_c[i] + frac_coords_c[j]
+                            r_m = np.dot(diff_m, K)
+                            r_c = np.dot(sum_c, K**2)
+                            temp_result = -4 * np.pi * K * np.sin(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+                            result[i] += temp_result * delm_coords[i] 
+                            # result[i] += temp_result #一旦∂I/∂mを求める
+                    Z[I, a, b, c, :n_atoms, :] = result
+
+    return Z"""
+
+"""
+def calculate_delI_delm_delm_delx_t(num_atoms, batch, m_tensor, c_tensor, delm_delx_t, num_workers=4):
+    num_crystals = batch['num_atoms'].size(0)
+    num_atoms_max = max(num_atoms).cpu()
+    
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+    
+    Z = torch.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3), dtype=torch.float32)
+
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])
+        end_index = start_index + batch['num_atoms'][I]
+        frac_coords_m = m_tensor[start_index:end_index].cpu()
+        frac_coords_c = c_tensor[start_index:end_index].cpu()
+        delm_coords = delm_delx_t[start_index:end_index]
+        
+        n_atoms = frac_coords_m.shape[0]
+
+        # (k1, k2, k3) の組み合わせをすべて列挙
+        tasks = [(k1, k2, k3) for k1 in k1_values for k2 in k2_values for k3 in k3_values]
+
+        # タスクをバッチに分割
+        batch_size = max(1, len(tasks) // num_workers)
+        batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+
+        # print([(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delm_coords, num_atoms_max, n_atoms) for batch in batches])
+        with mp.Pool(processes=num_workers) as pool:
+            results = pool.starmap(calculate_for_k_value, [(batch, k1_values, k2_values, k3_values, frac_coords_m, frac_coords_c, delm_coords, num_atoms_max, n_atoms) for batch in batches])
+        
+        # 結果を Z に反映
+        for batch_results in results:
+            for k1, k2, k3, result in batch_results:
+                a = np.where(k1_values == k1)[0][0]
+                b = np.where(k2_values == k2)[0][0]
+                c = np.where(k3_values == k3)[0][0]
+                Z[I, a, b, c, :n_atoms, :] = result
+    
+    return Z"""
+
+"""def calculate_delI_delc_delc_delx_t(num_atoms, batch, m_tensor, c_tensor, delc_delx_t):
+    num_crystals = batch['num_atoms'].size(0)  # バッチサイズ
+    num_atoms_max = max(num_atoms)  # 最大のnum_atomsを持つ結晶の数
+
+    # kの範囲設定
+    k1_values = np.arange(-2, 3, 1)
+    k2_values = np.arange(-2, 3, 1)
+    k3_values = np.arange(-2, 3, 1)
+
+    # 結果を格納する配列
+    Z = np.zeros((num_crystals, len(k1_values), len(k2_values), len(k3_values), num_atoms_max, 3))
+
+    # バッチ内の全ての結晶に対してループ
+    for I in range(num_crystals):
+        start_index = sum(batch['num_atoms'][:I])  # I番目の結晶の開始インデックス
+        end_index = start_index + batch['num_atoms'][I]  # I番目の結晶の終了インデックス
+        frac_coords_m = m_tensor[start_index:end_index]
+        frac_coords_c = c_tensor[start_index:end_index]
+        delc_coords = delc_delx_t[start_index:end_index]
+        
+        n_atoms = frac_coords_m.shape[0]  # 現在の結晶の原子数
+
+        # k1とk2を動かして複素数の和を計算
+        for a, k1 in enumerate(k1_values):
+            for b, k2 in enumerate(k2_values):
+                for c, k3 in enumerate(k3_values):
+                    K = np.array([k1, k2, k3])
+                    K_squared = K**2  # 各要素の二乗からなる3次元ベクトル
+                    # 計算を行う
+                    result = np.zeros((num_atoms_max, 3))
+                    for i in range(n_atoms):
+                        for j in range(n_atoms):
+                            diff_m = frac_coords_m[i] - frac_coords_m[j]
+                            sum_c = frac_coords_c[i] + frac_coords_c[j]
+                            r_m = np.dot(diff_m, K)
+                            r_c = np.dot(sum_c, K_squared)
+                            temp_result = -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+                            result[i] += temp_result * delc_coords[i]
+                            # result[i] += temp_result
+                    Z[I, a, b, c, :n_atoms, :] = result
+    return Z"""

@@ -12,7 +12,7 @@ import numpy as np
 from diffcsp.common.utils import PROJECT_ROOT
 from diffcsp.common.data_utils import (
     preprocess, preprocess_tensors, add_scaled_lattice_prop)
-from diffcsp.pl_modules.diff_utils import generate_crystal_structures, generate_crystal_structures_2, add_noise_to_structure
+from diffcsp.pl_modules.diff_utils import generate_crystal_structures, generate_crystal_structures_2, generate_crystal_structures_3, add_noise_to_structure
 
 
 class CrystDataset(Dataset):
@@ -196,7 +196,7 @@ class EasyStructureDataset(Dataset):
     
 
     def __getitem__(self, index):
-        struct_idx = 0 # index % 2
+        struct_idx = index % 2 # 0
         cell0 = self.data[struct_idx]
         noisy_structure = add_noise_to_structure(cell0)
         frac_coords = torch.tensor(noisy_structure, dtype=torch.float32)
@@ -261,7 +261,7 @@ class EasyStructureDataset_2(Dataset):
     
 
     def __getitem__(self, index):
-        struct_idx = 0 # index % 2
+        struct_idx = index % 2 #0
         cell0 = self.data[struct_idx]
         noisy_structure = add_noise_to_structure(cell0)
         frac_coords = torch.tensor(noisy_structure, dtype=torch.float32)
@@ -296,6 +296,72 @@ class EasyStructureDataset_2(Dataset):
 
     def __repr__(self) -> str:
         return f"DiamondDataset(pickle_path='{self.pickle_path}')"
+    
+
+class EasyStructureDataset_3(Dataset):
+    def __init__(self, name: ValueNode, path: ValueNode,
+                 prop: ValueNode, niggli: ValueNode, primitive: ValueNode,
+                 graph_method: ValueNode, preprocess_workers: ValueNode,
+                 lattice_scale_method: ValueNode, save_path: ValueNode, tolerance: ValueNode, use_space_group: ValueNode, use_pos_index: ValueNode,
+                 **kwargs):
+        super().__init__()
+        self.data = generate_crystal_structures_3()
+        self.lengths = np.array([[4.24596403, 4.24596403, 4.24596403], [4.24596403, 4.24596403, 4.24596403]])
+        self.angles = np.array([[90, 90, 90], [ 90, 90, 90]])
+        self.path = path
+        self.name = name
+        self.prop = prop
+        self.niggli = niggli
+        self.primitive = primitive
+        self.graph_method = graph_method
+        self.lattice_scale_method = lattice_scale_method
+        self.use_space_group = use_space_group
+        self.use_pos_index = use_pos_index
+        self.tolerance = tolerance
+
+        self.lattice_scaler = None
+        self.scaler = None
+
+    def __len__(self) -> int:
+        return len(self.data)
+    
+
+    def __getitem__(self, index):
+        struct_idx = index % 2 #0
+        cell0 = self.data[struct_idx]
+        noisy_structure = add_noise_to_structure(cell0)
+        frac_coords = torch.tensor(noisy_structure, dtype=torch.float32)
+        frac_coords[frac_coords < 0] += 1
+        atom_types = torch.LongTensor([27, 81, 7, 7, 8])
+        lengths = torch.Tensor(self.lengths[struct_idx]).view(1, -1)
+        angles = torch.Tensor(self.angles[struct_idx]).view(1, -1)
+
+        # 完全連結グラフの作成（全ての原子が互いに接続）
+        num_atoms = len(frac_coords)
+        edge_indices = torch.LongTensor(np.array([(i, j) for i in range(num_atoms) for j in range(num_atoms)]).T)
+
+        # to_jimagesのプレースホルダー（ここでは未使用）
+        to_jimages = torch.LongTensor(np.zeros((edge_indices.shape[1], 3)))
+
+        # yのプレースホルダー（スコア）
+        y = torch.Tensor(1)#.view(1, -1)
+        
+        data = Data(
+            frac_coords=torch.Tensor(frac_coords),
+            atom_types=atom_types,
+            lengths=lengths,
+            angles=angles,
+            edge_index=edge_indices.contiguous(),  # 形状 (2, num_edges)
+            to_jimages=to_jimages,
+            num_atoms=num_atoms,
+            num_bonds=edge_indices.shape[1],
+            num_nodes=num_atoms,  # PyTorch Geometricでバッチ処理に使用される特殊な属性
+            y=y,
+        )
+        return data
+
+    def __repr__(self) -> str:
+        return f"CrystalDataset(pickle_path='{self.pickle_path}')"
 
 
 
