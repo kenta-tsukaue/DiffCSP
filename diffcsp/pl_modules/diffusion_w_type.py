@@ -106,10 +106,14 @@ class CSPDiffusion(BaseModule):
         input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
         gt_atom_types_onehot = F.one_hot(batch.atom_types - 1, num_classes=MAX_ATOMIC_NUM).float()
+        print(gt_atom_types_onehot.shape)
+        print(gt_atom_types_onehot[0])
 
         rand_t = torch.randn_like(gt_atom_types_onehot)
 
         atom_type_probs = (c0.repeat_interleave(batch.num_atoms)[:, None] * gt_atom_types_onehot + c1.repeat_interleave(batch.num_atoms)[:, None] * rand_t)
+        print(atom_type_probs.shape)
+        print(atom_type_probs)
 
         if self.keep_coords:
             input_frac_coords = frac_coords
@@ -118,6 +122,9 @@ class CSPDiffusion(BaseModule):
             input_lattice = lattices
 
         pred_l, pred_x, pred_t = self.decoder(time_emb, atom_type_probs, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+
+        print(pred_t.shape)
+        print(pred_t)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 

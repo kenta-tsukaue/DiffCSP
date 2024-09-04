@@ -365,7 +365,7 @@ class CSPDiffusion(BaseModule):
                 'lattices' : l_t_minus_1              
             }
 
-            c = torch.full((batch_size, 3), 0.01)
+            c = torch.full((batch_size * 5, 3), 0.01) #5は適宜変更
 
             loss = calculate_loss(batch, traj[t - 1], c)
             print(loss)

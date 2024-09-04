@@ -260,6 +260,8 @@ class CSPNet(nn.Module):
             
 
     def forward(self, t, atom_types, frac_coords, lattices, num_atoms, node2graph):
+        #print(atom_types.shape)
+        #print(atom_types)
         edges, frac_diff = self.gen_edges(num_atoms, frac_coords, lattices, node2graph)
         edge2graph = node2graph[edges[0]]
         if self.smooth:
@@ -267,9 +269,18 @@ class CSPNet(nn.Module):
         else:
             node_features = self.node_embedding(atom_types - 1)
 
+        #print(node_features.shape)
+        #print(node_features)
+
         t_per_atom = t.repeat_interleave(num_atoms, dim=0)
+        #print(t_per_atom.shape)
+        #print(t_per_atom)
         node_features = torch.cat([node_features, t_per_atom], dim=1)
+        #print(node_features.shape)
+        #print(node_features)
         node_features = self.atom_latent_emb(node_features)
+        #print(node_features.shape)
+        #print(node_features)
 
         for i in range(0, self.num_layers):
             node_features = self._modules["csp_layer_%d" % i](node_features, frac_coords, lattices, edges, edge2graph, frac_diff = frac_diff)
