@@ -1,0 +1,15 @@
+Title Test Silicon
+Cell     5.430969   5.430969   5.430969  90.000000  90.000000  90.000000
+Spgr F d -3 m
+Jobtype   Neutrons
+Lambda      0.1
+Lambda_range  0.1  6.0  1300
+gaussian_range  1.0  4
+Maxwell_temp   300.0
+holes   4    1.3  0.3 0.03    1.56 0.35 0.02    2.4 0.4 0.05   1.9 0.2 0.02
+UVWX         0.20000        0.00000        0.2200        0.20000
+Pattern         2.00        0.01      170.00
+Backgd      200.000
+Size_LG        9999.0      9999.0
+Reflist
+Atom Si    Si    0.12500  0.12500  0.12500  0.42315   1.00000

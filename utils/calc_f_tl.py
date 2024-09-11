@@ -6,6 +6,8 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
 import matplotlib.pyplot as plt
 
+from get_af0 import af0
+
 
 def create_tlcon2o_crystals():
     # 一つ目の結晶 TlCoN2O のデータ
@@ -93,6 +95,25 @@ def scattering_factor(atom_number, q):
     print(atom_number, f_q)
     return f_q
 
+def scattering_factor_with_table(atom_number, K, af0_table):
+    h = K[0]
+    k = K[1]
+    l = K[2]
+    
+    # dfから条件に一致する行をフィルタリング
+    filtered_row = af0_table[
+        (af0_table['atom_num'] == atom_number.item()) &
+        (af0_table['h'] == h) &
+        (af0_table['k'] == k) &
+        (af0_table['l'] == l)
+    ]
+    
+    # フィルタされた行からaf0を取得し、f_qとして返す
+    if not filtered_row.empty:
+        f_q = filtered_row.iloc[0]['af0']  # 一致する行が複数あった場合、最初の行を使用
+        return f_q
+    else:
+        print("エラー")
 
 def complex_sum_squared_with_scattering_factors(k, A, atom_types):
     """
@@ -134,6 +155,46 @@ def complex_sum_squared_with_scattering_factors(k, A, atom_types):
     print(real_result)
     return real_result
 
+def complex_sum_squared_with_scattering_factors_with_table(k, A, atom_types, af0_table):
+    """
+    3次元ベクトル k と (n x 3) の行列 A、および散乱因子のリスト f を受け取り、
+    I(hkl) = |F(hkl)|^2 を計算する関数。
+    F(hkl) = sum_j f_j * exp(2 * pi * i * (hx_j + ky_j + lz_j))
+    I(hkl) = sum_j sum_k f_j * f_k * exp(2 * pi * i * ((x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l))
+
+    Parameters:
+    k (np.ndarray): 3次元ベクトル (h, k, l)
+    A (np.ndarray): (n x 3) の行列 (原子の分率座標)
+    f (np.ndarray): (n) の配列 (原子の散乱因子)
+
+    Returns:
+    float: 回折強度 I(hkl)
+    """
+    i = complex(0, 1)
+    pi = np.pi
+
+    # CUDAテンソルをCPUに移動させてNumPy配列に変換
+    if isinstance(A, torch.Tensor):
+        A = A.cpu().numpy()
+
+    # 行数を取得
+    n = A.shape[0]
+
+    # 回折強度 I(hkl) の計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            f_j = scattering_factor_with_table(atom_types[j], k, af0_table)
+            f_m = scattering_factor_with_table(atom_types[m], k, af0_table)
+            diff = A[j] - A[m]
+            r = np.dot(diff, k)
+            result += f_j * f_m * np.exp(2 * pi * i * r)
+
+    # 結果の実部のみを返す
+    real_result = np.real(result)
+    print(real_result)
+    return real_result
+
 def visualize_complex_sum(A, num_atoms, atom_types):
     # kの範囲設定
     k1_values = np.arange(-2, 3, 1)
@@ -141,11 +202,14 @@ def visualize_complex_sum(A, num_atoms, atom_types):
     # 結果を格納する配列
     Z = np.zeros((len(k1_values), len(k2_values)))
 
+    af0_table = af0()
+
     # k1とk2を動かしてcomplex_sumの値を計算
     for i, k1 in enumerate(k1_values):
         for j, k2 in enumerate(k2_values):
-            k = np.array([-2, k1, k2])
+            k = np.array([0, k1, k2])
             Z[i, j] = complex_sum_squared_with_scattering_factors(k, A, atom_types)
+            #Z[i, j] = complex_sum_squared_with_scattering_factors_with_table(k, A, atom_types, af0_table)
 
     print(Z)
 
@@ -192,7 +256,7 @@ def main():
 
         # 結晶構造を可視化
         #visualize_structure(structure)  # 可視化関数を呼び出し
-        visualize_structure_with_matplotlib(structure)
+        #visualize_structure_with_matplotlib(structure)
 
         # Fを計算
         visualize_complex_sum(first_frac_coords, num_atoms, first_atom_types)
