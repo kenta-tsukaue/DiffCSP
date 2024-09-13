@@ -205,7 +205,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/sample_d1_44_20/traj_200.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/sample_d1_44_23/traj_200.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
 
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
