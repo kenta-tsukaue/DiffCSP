@@ -9,6 +9,38 @@ from collections import defaultdict
 
 from get_af0 import af0
 
+
+def create_tlcon2o_crystals():
+    scale_factor = 0.6  # 必要に応じてスケールを変更
+    offset = 0.0  # 必要に応じてオフセットを変更
+    # 一つ目の結晶 TlCoN2O のデータ
+    lattice_params = {
+        "lengths": [4.24596403, 4.24596403, 4.24596403],
+        "angles": [90.00000000, 90.00000000, 90.00000000]
+    }
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
+    frac_coords_1 = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+    atom_types_1 = [27, 7, 7, 8, 81]
+
+    
+    # 二つ目の結晶 TlCoN2O のデータ (line配置)
+    
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
+    frac_coords_2 = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+    atom_types_2 = [27, 81, 7, 7, 8]
+    
+    # データをTorchテンソルに変換してバッチに格納
+    loaded_batch = {
+        'frac_coords': torch.tensor(frac_coords_1 + frac_coords_2),
+        'atom_types': torch.tensor([atom_types_1, atom_types_2]),
+        'lengths': torch.tensor([lattice_params["lengths"],lattice_params["lengths"]]),
+        'angles': torch.tensor([lattice_params["angles"], lattice_params["angles"]]),
+        'num_atoms': torch.tensor([len(frac_coords_1), len(frac_coords_2)]),
+    }
+
+    return loaded_batch
+
+
 def visualize_structure_with_matplotlib(structure):
     """
     結晶構造をmatplotlibで可視化する関数
@@ -204,7 +236,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/d1_43_17/batch.pt', map_location=torch.device('cpu'))
+    loaded_batch = create_tlcon2o_crystals()
     # 読み込んだデータを使用
     print(loaded_batch)
 
@@ -217,7 +249,7 @@ def main():
 
         # i番目の結晶のデータを抽出
         first_frac_coords = loaded_batch['frac_coords'][start_index:end_index]
-        first_atom_types = loaded_batch['atom_types'][start_index:end_index]
+        first_atom_types = loaded_batch['atom_types'][i]
         first_lengths = loaded_batch['lengths'][i]
         first_angles = loaded_batch['angles'][i]
         num_atoms = loaded_batch['num_atoms'][i]
@@ -228,9 +260,11 @@ def main():
 
         # pymatgenのStructureオブジェクトを作成
         structure = Structure(lattice, first_atom_types, first_frac_coords)
+        print(structure)
 
         # 結晶構造を可視化
-        visualize_structure_with_matplotlib(structure)  # 可視化関数を呼び出し
+        #visualize_structure(structure)  # 可視化関数を呼び出し
+        visualize_structure_with_matplotlib(structure)
 
         # Fを計算
         visualize_complex_sum(first_frac_coords, num_atoms, first_atom_types)

@@ -208,8 +208,8 @@ def visualize_complex_sum(A, num_atoms, atom_types):
     for i, k1 in enumerate(k1_values):
         for j, k2 in enumerate(k2_values):
             k = np.array([0, k1, k2])
-            Z[i, j] = complex_sum_squared_with_scattering_factors(k, A, atom_types)
-            #Z[i, j] = complex_sum_squared_with_scattering_factors_with_table(k, A, atom_types, af0_table)
+            #Z[i, j] = complex_sum_squared_with_scattering_factors(k, A, atom_types)
+            Z[i, j] = complex_sum_squared_with_scattering_factors_with_table(k, A, atom_types, af0_table)
 
     print(Z)
 
