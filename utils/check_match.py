@@ -5,13 +5,14 @@ import torch
 
 def main():
     # 真の結晶構造のデータの呼び出し、データをCPUにマッピング
-    true_batch = torch.load('sample/d2_sample_gradual/batch.pt', map_location=torch.device('cpu'))
+    true_batch = torch.load('sample/sample_d1_48_4_1/batch.pt', map_location=torch.device('cpu'))
     # 予測された結晶構造のデータの呼び出し、データをCPUにマッピング
-    predicted_batch = torch.load('sample/d2_sample_gradual/traj.pt', map_location=torch.device('cpu'))
+    predicted_batch = torch.load('sample/sample_d1_48_4_1/traj.pt', map_location=torch.device('cpu'))
 
     num_crystals = true_batch['num_atoms'].size(0)  # バッチサイズ
 
     matcher = StructureMatcher(ltol=0.3, stol=0.5, angle_tol=10)
+    score = 0
 
     # バッチ内の全ての結晶に対してループ
     for i in range(num_crystals):
@@ -40,9 +41,11 @@ def main():
 
         # 構造の一致度を確認
         if matcher.fit(true_structure, predicted_structure):
-            print(f"Structure {i+1} matches.")
+            score += 1
         else:
-            print(f"Structure {i+1} does not match.")
+            print(i)
+
+    print(f"一致率:{score/num_crystals}")
 
 if __name__ == "__main__":
     main()

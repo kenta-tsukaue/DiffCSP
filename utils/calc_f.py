@@ -6,8 +6,10 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
 import matplotlib.pyplot as plt
 from collections import defaultdict
+import pandas as pd
 
-from get_af0 import af0
+from get_fq import get_fq
+
 
 def visualize_structure_with_matplotlib(structure):
     """
@@ -178,7 +180,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
     # 結果を格納する配列
     Z = np.zeros((len(k1_values), len(k2_values)))
 
-    af0_table = af0()
+    af0_table = get_fq()
 
     # k1とk2を動かしてcomplex_sumの値を計算
     for i, k1 in enumerate(k1_values):
@@ -204,7 +206,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/sample_d1_44_30/batch.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/sample_d1_50_14/batch.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
     print(loaded_batch)
 

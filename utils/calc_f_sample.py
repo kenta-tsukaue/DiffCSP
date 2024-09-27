@@ -7,7 +7,8 @@ from pymatgen.vis.structure_vtk import StructureVis  # VTKベースの可視化
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
-from get_af0 import af0
+from get_fq import get_fq
+
 
 def visualize_structure_with_matplotlib(structure):
     """
@@ -179,7 +180,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
     # 結果を格納する配列
     Z = np.zeros((len(k1_values), len(k2_values)))
 
-    af0_table = af0()
+    af0_table = get_fq()
 
     # k1とk2を動かしてcomplex_sumの値を計算
     for i, k1 in enumerate(k1_values):
@@ -205,7 +206,7 @@ def visualize_complex_sum(A, num_atoms, atom_types):
 
 def main():
     # データの呼び出し、データをCPUにマッピング
-    loaded_batch = torch.load('sample/sample_d1_44_23/traj_200.pt', map_location=torch.device('cpu'))
+    loaded_batch = torch.load('sample/sample_d1_50_15/traj.pt', map_location=torch.device('cpu'))
     # 読み込んだデータを使用
 
     num_crystals = loaded_batch['num_atoms'].size(0)  # バッチサイズ
@@ -221,8 +222,8 @@ def main():
         first_atom_types = loaded_batch['atom_types'][start_index:end_index]
         num_atoms = loaded_batch['num_atoms'][i]
         lattice = loaded_batch['lattices'][i]
-        m = loaded_batch['m'][start_index:end_index] + 0.5
-        c = torch.full_like(m, 0.007)
+        #m = loaded_batch['m'][start_index:end_index] + 0.5
+        #c = torch.full_like(m, 0.007)
 
         # pymatgenのStructureオブジェクトを作成
         structure = Structure(lattice, first_atom_types, first_frac_coords)

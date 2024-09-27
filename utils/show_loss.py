@@ -1,9 +1,10 @@
 import torch
 import matplotlib.pyplot as plt
+import japanize_matplotlib
 
 # ファイルパス
-file_1 = 'sample/d1_43_17/loss_tensor.pt'
-file_2 = 'sample/d1_43_18/loss_tensor.pt'
+file_1 = 'sample/sample_d1_48_100_0/batch_loss_tensor.pt'
+file_2 = 'sample/sample_d1_48_100/batch_loss_tensor.pt'
 
 # テンソルを読み込む
 tensor_1 = torch.load(file_1)
@@ -15,8 +16,8 @@ tensor_2 = tensor_2.numpy()
 
 # プロット
 plt.figure(figsize=(10, 5))
-plt.plot(tensor_1, label='d1_43_17')
-plt.plot(tensor_2, label='d1_43_18')
+plt.plot(tensor_1, label='ランダム生成')
+plt.plot(tensor_2, label='狙って生成')
 
 # ラベルとタイトルを設定
 plt.xlabel('Index')
