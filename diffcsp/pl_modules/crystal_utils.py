@@ -1,108 +1,678 @@
 import os
 import numpy as np
 import torch
+import pandas as pd
 
-# クローマー・マン係数の定義
-cromer_mann_coefficients = {
-    27: {'a': [15.7924, 6.1253, 3.28719, 1.64550], 'b': [2.77200, 0.90200, 0.21700, 9.25200], 'c': 1.79131},
-    81: {'a': [29.2024, 15.1492, 14.5606, 5.98054], 'b': [1.14430, 10.0593, 0.21100, 27.0701], 'c': 13.4307},
-    7:  {'a': [12.2126, 3.13220, 2.01250, 1.16630], 'b': [0.00570, 9.89330, 28.9975, 0.58260], 'c': -11.529},
-    8:  {'a': [3.0485, 2.2868, 1.5463, 0.8670], 'b': [13.2771, 5.7011, 0.3239, 32.9089], 'c': 0.2508}
-}
 
-def initialize_coefficients(device='cuda:0'):
+#　パス
+scattering_factor_path = "/public/tsukaue/DiffCSP/utils_data/scattering_factors.xlsx"
+
+def check_nan_inf(data, marker='*'):
     """
-    クローマー・マン係数を PyTorch テンソルとして初期化する関数。
-    
+    与えられたtorch.Tensorまたはnumpy.ndarrayにNaNまたはinfが含まれているかを確認します。
+    含まれている場合は警告メッセージと位置にマーカーを表示します。
+    含まれていない場合は何も出力しません。
+
     Parameters:
-    - cromer_mann_coefficients (dict): 原子番号をキーとし、係数を含む辞書。
-    - device (str): テンソルを配置するデバイス。
-    
-    Returns:
-    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
+    data (torch.Tensor or numpy.ndarray): チェック対象のデータ
+    marker (str): NaNやinfの位置に表示するマーカー
     """
-    max_atom_type = max(cromer_mann_coefficients.keys())  # 最大原子番号を取得
-    a_coeff = torch.zeros((max_atom_type+1, 4), device=device, dtype=torch.float32)  # 形状 (82, 4)
-    b_coeff = torch.zeros((max_atom_type+1, 4), device=device, dtype=torch.float32)  # 形状 (82, 4)
-    c_coeff = torch.zeros((max_atom_type+1), device=device, dtype=torch.float32)     # 形状 (82,)
-    
-    for atom, coeff in cromer_mann_coefficients.items():
-        a_coeff[atom] = torch.tensor(coeff['a'], device=device, dtype=torch.float32)
-        b_coeff[atom] = torch.tensor(coeff['b'], device=device, dtype=torch.float32)
-        c_coeff[atom] = torch.tensor(coeff['c'], device=device, dtype=torch.float32)
-    
-    return a_coeff, b_coeff, c_coeff
+    if isinstance(data, torch.Tensor):
+        # TensorをNumPy配列に変換
+        data_np = data.cpu().numpy()
+    elif isinstance(data, np.ndarray):
+        data_np = data
+    else:
+        raise TypeError("入力はtorch.Tensorまたはnumpy.ndarrayである必要があります。")
 
+    has_nan = np.isnan(data_np).any()
+    has_inf = np.isinf(data_np).any()
 
-def scattering_factor_torch(atom_types, q_magnitude, a_coeff, b_coeff, c_coeff):
+    if not (has_nan or has_inf):
+        return  # NaNやinfが含まれていなければ何も出力しない
+
+    messages = []
+    if has_nan:
+        messages.append(f"データにNaNが含まれています。場所: {marker}")
+    if has_inf:
+        messages.append(f"データにinfが含まれています。場所: {marker}")
+
+    if messages:
+        print("警告:", " ".join(messages))
+        exit()
+
+def scattering_factor_torch_batch_from_file(atom_types):
     """
-    PyTorchを使用して散乱因子を計算する関数。
-    
-    Parameters:
-    - atom_types (torch.Tensor): 形状 (n_atoms,) のテンソル。各原子の原子番号。
-    - q_magnitude (torch.Tensor): 形状 (num_k,) のテンソル。各kベクトルのqの大きさ。
-    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
-    
-    Returns:
-    - f_q (torch.Tensor): 形状 (n_atoms, num_k) のテンソル。各原子の散乱因子。
-    """
-    pi = torch.pi
-    a = a_coeff[atom_types]  # shape (n_atoms, 4)
-    b = b_coeff[atom_types]  # shape (n_atoms, 4)
-    c = c_coeff[atom_types]  # shape (n_atoms,)
-    
-    # Reshape for broadcasting
-    a = a.unsqueeze(-1)  # (n_atoms, 4, 1)
-    b = b.unsqueeze(-1)  # (n_atoms, 4, 1)
-    q = q_magnitude.unsqueeze(0).unsqueeze(0)  # (1, 1, num_k)
-    
-    # Compute the exponent component
-    exp_component = torch.exp(-b * (q / (4 * pi))**2)  # (n_atoms, 4, num_k)
+    PyTorchを使用して散乱因子を計算する関数(バッチ対応）。
 
-    # Compute f_q: sum over j=1 to 4 of a_j * exp_component + c
-    f_q = torch.sum(a * exp_component, dim=1) + c.unsqueeze(1)  # (n_atoms, num_k)
-    
-    return f_q  # shape (n_atoms, num_k)
-
-def scattering_factor_torch_batch(atom_types, q_magnitude, a_coeff, b_coeff, c_coeff):
-    """
-    PyTorchを使用して散乱因子を計算する関数（バッチ対応）。
-    
     Parameters:
     - atom_types (torch.Tensor): 形状 (C, A_max) のテンソル。各原子の原子番号。
-    - q_magnitude (torch.Tensor): 形状 (num_k,) のテンソル。各kベクトルのqの大きさ。
-    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
-    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
+    - scattering_factor_path (str): 散乱因子データのExcelファイルのパス。
+
+    Returns:
+    - f_q (torch.Tensor): 形状 (C, A_max, 125) のテンソル。各原子の散乱因子。
+    """
+    # デバイスの取得（atom_typesと同じデバイスに配置）
+    device = atom_types.device
+
+    # Excelファイルから散乱因子データを読み込む
+    scattering_factor_df = pd.read_excel(scattering_factor_path)
+    #scattering_factor_df = scattering_factor_df.loc[~(scattering_factor_df[['h', 'k', 'l']] == 0).any(axis=1)]
+
+    # 必要な列のみを抽出
+    scattering_factor_df = scattering_factor_df[['atom_num', 'af0']]
+
+    # atom_numごとにaf0をリストとして集約
+    grouped = scattering_factor_df.groupby('atom_num')['af0'].apply(list)
+
+    # atom_numの最大値を取得
+    max_atom_num = grouped.index.max()
+
+    # af0の長さを確認（すべて125であることを前提）
+    af0_length = grouped.iloc[0].__len__()  # 最初のatom_numのaf0の長さを取得
+    assert all(len(af0_list) == af0_length for af0_list in grouped), "すべてのatom_numでaf0の長さが一致していません。"
+
+    # 最大原子番号に基づいてルックアップテーブルを初期化（0も含めるためmax_atom_num + 1）
+    lookup_table = torch.zeros((max_atom_num + 1, af0_length), dtype=torch.float32, device=device)
+
+    # 各atom_numに対してaf0をルックアップテーブルに格納
+    for atom_num, af0_list in grouped.items():
+        if atom_num == 0:
+            continue  # atom_numが0の場合は既に0で初期化されているためスキップ
+        # atom_numが整数であることを確認
+        if not isinstance(atom_num, int):
+            raise ValueError(f"atom_numが整数ではありません: {atom_num}")
+        # af0_listをテンソルに変換し、ルックアップテーブルに代入
+        lookup_table[atom_num] = torch.tensor(af0_list, dtype=torch.float32, device=device)
+
+    # atom_typesが0の場合はルックアップテーブルの0番目（全て0）を使用
+    # その他の場合は対応するaf0を取得
+    # atom_typesの形状は (C, A_max) で、出力f_qの形状は (C, A_max, 125)
+    f_q = lookup_table[atom_types]  # 高度なインデックス付けを使用
+
+    print(f_q.shape)
+
+    return f_q
+
+def get_fq(batch):
+    """
+    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
+    
+    Args:
+        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
+        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
+        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
+        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
     
     Returns:
-    - f_q (torch.Tensor): 形状 (C, A_max, num_k) のテンソル。各原子の散乱因子。
+        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
     """
-    pi = torch.pi
-    C, A_max = atom_types.shape  # バッチのサイズと最大の原子数を取得
+    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
+    num_atoms = batch['num_atoms'].to('cpu')  # [C]
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = torch.max(num_atoms).item()
+    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
     
-    # a, b, c の各係数を atom_types から選択
-    a = a_coeff[atom_types]  # shape (C, A_max, 4)
-    b = b_coeff[atom_types]  # shape (C, A_max, 4)
-    c = c_coeff[atom_types]  # shape (C, A_max)
-    
-    # Reshape for broadcasting
-    a = a.unsqueeze(-1)  # (C, A_max, 4, 1)
-    b = b.unsqueeze(-1)  # (C, A_max, 4, 1)
-    q = q_magnitude.unsqueeze(0).unsqueeze(0).unsqueeze(0)  # (1, 1, 1, num_k)
-    
-    # Compute the exponent component
-    exp_component = torch.exp(-b * (q / (4 * pi))**2)  # (C, A_max, 4, num_k)
-    
-    # Compute f_q: sum over j=1 to 4 of a_j * exp_component + c
-    f_q = torch.sum(a * exp_component, dim=2) + c.unsqueeze(-1)  # (C, A_max, num_k)
-    
-    return f_q  # shape (C, A_max, num_k)
+    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
 
+
+    start = 0
+    for i in range(num_crystals):
+        n = num_atoms[i].item()
+        padded_atom_types[i, :n] = atom_types[start:start+n]
+        start += n
+    
+    # 散乱因子の計算
+    # f_i: [C, A_max, K]
+    fq = scattering_factor_torch_batch_from_file(padded_atom_types)  # [C, A_max, K]
+    #(f_i.shape)
+    return fq
+
+
+def calculate_y_vectorized_re(batch, c, fq):
+    """
+    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
+    
+    Args:
+        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
+        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
+        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
+        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
+    
+    Returns:
+        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
+    """
+    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
+    num_atoms = batch['num_atoms'].to('cpu')  # [C]
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = torch.max(num_atoms).item()
+    m = batch['frac_coords']
+    c = c.to(device)  # [Total_atoms, 3]
+    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
+    
+    # Kベクトルの生成
+    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
+    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    num_k = K.shape[0]
+    
+    # 出力テンソルの初期化
+    Z = torch.zeros((num_crystals, num_k), dtype=torch.float32, device=device)
+    
+    # 各結晶のデータをパディングしてバッチ化
+    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
+    
+    start = 0
+    for i in range(num_crystals):
+        n = num_atoms[i].item()
+        padded_m[i, :n] = m[start:start+n]
+        padded_c[i, :n] = c[start:start+n]
+        padded_atom_types[i, :n] = atom_types[start:start+n]
+        start += n
+    
+    # 散乱因子の計算
+    # f_i: [C, A_max, K]
+    f_i = fq
+    f_j = fq
+    
+    # ペアワイズの差分と和の計算
+    # diff_m: [C, A_max, A_max, 3]
+    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
+    #print(diff_m.shape)
+    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
+    #print(sum_c.shape)
+    
+    # Kベクトルを展開
+    # K: [K, 3] -> [1, 1, 1, K, 3]
+    K_expanded = K.view(1, 1, 1, num_k, 3)
+    #print(K.shape)
+
+    diff_m = diff_m.to(torch.double)
+    K = K.to(torch.double)
+    
+    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
+    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
+    #print(r_m.shape)
+    
+    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
+    K_sq = K ** 2  # [K, 3]
+    sum_c = sum_c.to(torch.double)
+    K_sq = K_sq.to(torch.double)
+    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
+    
+    # 散乱因子の積
+    # f_i: [C, A_max, K], f_j: [C, A_max, K]
+    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
+    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
+    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
+    
+    # sin と exp の計算
+    exp_term = torch.exp(2 * torch.pi * 1j * r_m - 2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
+    
+    # temp_result: [C, A_max, A_max, K]
+    temp_result = (f_ij * exp_term)  # [C, A_max, A_max, K]
+    # print(temp_result.shape)
+    
+    # j に対して合計
+    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K]
+    # print(sum_j.shape)
+    sum_j = torch.sum(sum_j, dim=1)
+    # print(sum_j.shape)
+
+    sum_j = sum_j.real / 100
+    
+    # Z に格納
+    Z += sum_j  # [C, K]
+    Z = Z.view(num_crystals, 5, 5, 5)
+    Z[:, 2, 2, 2] = 0
+    
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.cpu().numpy()
+    
+    return Z_numpy
+
+def calculate_I_vectorized_re(batch, m, c, fq):
+    """
+    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
+    
+    Args:
+        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
+        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
+        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
+        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
+    
+    Returns:
+        np.ndarray: 計算された Z テンソル [C, 4, 4, 4, num_atoms_max, 3]
+    """
+    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
+    num_atoms = batch['num_atoms'].to('cpu')  # [C]
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = torch.max(num_atoms).item()
+    m = m.to(device)
+    c = c.to(device)  # [Total_atoms, 3]
+    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
+    
+    # Kベクトルの生成
+    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
+    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    num_k = K.shape[0]
+    
+    # 出力テンソルの初期化
+    Z = torch.zeros((num_crystals, num_k), dtype=torch.float32, device=device)
+    
+    # 各結晶のデータをパディングしてバッチ化
+    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
+    
+    start = 0
+    for i in range(num_crystals):
+        n = num_atoms[i].item()
+        padded_m[i, :n] = m[start:start+n]
+        padded_c[i, :n] = c[start:start+n]
+        padded_atom_types[i, :n] = atom_types[start:start+n]
+        start += n
+    
+    # 散乱因子の計算
+    # f_i: [C, A_max, K]
+    f_i = fq
+    f_j = fq
+    #(f_i.shape)
+    
+    # ペアワイズの差分と和の計算
+    # diff_m: [C, A_max, A_max, 3]
+    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
+    #print(diff_m.shape)
+    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
+    #print(sum_c.shape)
+    
+    # Kベクトルを展開
+    # K: [K, 3] -> [1, 1, 1, K, 3]
+    K_expanded = K.view(1, 1, 1, num_k, 3)
+    #print(K.shape)
+
+    diff_m = diff_m.to(torch.double)
+    K = K.to(torch.double)
+    
+    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
+    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
+    #print(r_m.shape)
+    
+    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
+    K_sq = K ** 2  # [K, 3]
+    sum_c = sum_c.to(torch.double)
+    K_sq = K_sq.to(torch.double)
+    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
+    
+    # 散乱因子の積
+    # f_i: [C, A_max, K], f_j: [C, A_max, K]
+    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
+    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
+    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
+    
+    # sin と exp の計算
+    exp_term = torch.exp(2 * torch.pi * 1j * r_m - 2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
+    
+    # temp_result: [C, A_max, A_max, K]
+    temp_result = (f_ij * exp_term)  # [C, A_max, A_max, K]
+    # print(temp_result.shape)
+    
+    # j に対して合計
+    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K]
+    # print(sum_j.shape)
+    sum_j = torch.sum(sum_j, dim=1)
+    # print(sum_j.shape)
+
+    sum_j = sum_j.real / 100
+    
+    # Z に格納
+    Z += sum_j  # [C, K]
+    Z = Z.view(num_crystals, 5, 5, 5)
+    Z[:, 2, 2, 2] = 0
+    
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.cpu().numpy()
+    
+    return Z_numpy
+
+def calculate_delI_delm_delx_t_vectorized(batch, m, c, delm_delx_t, fq):
+    """
+    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
+    
+    Args:
+        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
+        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
+        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
+        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
+    
+    Returns:
+        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
+    """
+    upper_limit = 1e10  # 例: 上限値を1e10に設定
+    
+    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
+    num_atoms = batch['num_atoms'].to('cpu')  # [C]
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = torch.max(num_atoms).item()
+    m = m.to(device)  # [Total_atoms, 3]
+    c = c.to(device)  # [Total_atoms, 3]
+    # numpy配列である場合、torch.Tensorに変換
+    if isinstance(delm_delx_t, np.ndarray):
+        delm_delx_t = torch.tensor(delm_delx_t, dtype=torch.float32)
+    delm_delx_t = delm_delx_t.to(device)  # [Total_atoms]
+    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
+    
+    # Kベクトルの生成
+    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
+    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  
+    num_k = K.shape[0]
+    
+    # 出力テンソルの初期化
+    Z = torch.zeros((num_crystals, num_k, num_atoms_max, 3), dtype=torch.float32, device=device)
+    
+    
+    # 各結晶のデータをパディングしてバッチ化
+    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_delm = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
+
+    #print(m.shape)
+    #print(delm_delx_t.shape)
+    
+    start = 0
+    for i in range(num_crystals):
+        n = num_atoms[i].item()
+        padded_m[i, :n] = m[start:start+n]
+        padded_c[i, :n] = c[start:start+n]
+        padded_delm[i, :n] = delm_delx_t[start:start+n]
+        padded_atom_types[i, :n] = atom_types[start:start+n]
+        start += n
+    
+    # 散乱因子の計算
+    # f_i: [C, A_max, K]
+    f_i = fq
+    f_j = fq
+    #(f_i.shape)
+    
+    # ペアワイズの差分と和の計算
+    # diff_m: [C, A_max, A_max, 3]
+    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
+    check_nan_inf(diff_m, "diff_m")
+    #print(diff_m.shape)
+    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
+    check_nan_inf(sum_c, "sum_c")
+    #print(sum_c.shape)
+    
+    diff_m = diff_m.to(torch.double)
+    
+    K = K.to(torch.double)
+    
+    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
+    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
+    check_nan_inf(r_m, "r_m")
+    #print(r_m.shape)
+    
+    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
+    K_sq = K ** 2  # [K, 3]
+    sum_c = sum_c.to(torch.double)
+    K_sq = K_sq.to(torch.double)
+    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
+    check_nan_inf(r_c, "r_c")
+    
+    # 散乱因子の積
+    # f_i: [C, A_max, K], f_j: [C, A_max, K]
+    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
+    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
+    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
+    check_nan_inf(f_ij, "f_ij")
+    
+    # temp_result の計算
+    # -4πK: [K, 3]
+    temp = -4 * torch.pi * K  # [K, 3]
+    # sin と exp の計算
+    sin_term = torch.sin(2 * torch.pi * r_m)  # [C, A_max, A_max, K]
+    check_nan_inf(sin_term, "sin_term")
+    exp_term = torch.exp(-2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
+    check_nan_inf(exp_term, "exp_term")
+    # delm_coords[i]: [C, A_max, 1, 1]
+    delm_i = padded_delm.unsqueeze(2) # [C, A_max, 1, 1]
+    #(delm_i.shape)
+
+    
+    # temp_result: [C, A_max, A_max, K, 3]
+    temp_result = (temp.unsqueeze(0).unsqueeze(0) * f_ij.unsqueeze(-1) * sin_term.unsqueeze(-1) * exp_term.unsqueeze(-1))  # [C, A_max, A_max, K, 3]
+    check_nan_inf(temp_result, "temp_result_1")
+    # delm_coords[i] を乗算
+    #print(temp_result.shape)
+    # delm_i の形状を [16, 5, 5, 125, 3] に揃える
+    delm_i = delm_i.unsqueeze(3)  # [16, 5, 1, 1, 3]
+    #print(delm_i.shape)
+    delm_i = delm_i.expand(-1, -1, -1, 125, -1)  # [C, A_max, A_max, K, 3]
+    #print(delm_i.shape)
+    # delm_i の中に inf がある場合、最大値で置換
+    delm_i = torch.where(torch.isinf(delm_i), torch.tensor(upper_limit, device=delm_i.device), delm_i)
+    temp_result = temp_result * delm_i  # [C, A_max, A_max, K, 3]
+    temp_result = torch.clamp(temp_result, max=upper_limit)
+    check_nan_inf(temp_result, "temp_result_2")
+    
+    # j に対して合計
+    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K, 3]
+    sum_j = sum_j.permute(0, 2, 1, 3)  # [C, K, A_max, 3]
+    check_nan_inf(sum_j, "sum_j")
+    #print(sum_j.shape)
+    
+    # Z に格納
+    Z += sum_j  # [C, K, A_max, 3]
+
+    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
+    #print(Z[0][2][2][1])
+    Z[:, 2, 2, 2, :, :] = 0
+    # Clamp を適用
+    Z = torch.clamp(Z, max=upper_limit)
+
+    # `inf` を `upper_limit` に置き換える
+    Z = torch.nan_to_num(Z, posinf=upper_limit, neginf=-upper_limit, nan=0.0)
+    #print(Z[0][2][2][1])
+
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.cpu().numpy()
+    check_nan_inf(Z_numpy, "Z_numpy")
+    
+    return Z_numpy
+
+def calculate_delI_delc_delx_t_vectorized(batch, m, c, delc_delx_t, fq):
+    """
+    バッチ内の全ての結晶に対して構造因子のc_t微分を計算する関数。
+    
+    Args:
+        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
+        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
+        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
+        delc_delx_t (torch.Tensor): delc/delx_t テンソル [Total_atoms]
+    
+    Returns:
+        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
+    """
+    upper_limit = 1e10  # 例: 上限値を1e10に設定
+    
+    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
+    num_atoms = batch['num_atoms'].to('cpu')  # [C]
+    num_crystals = num_atoms.size(0)
+    num_atoms_max = torch.max(num_atoms).item()
+    m = m.to(device)  # [Total_atoms, 3]
+    c = c.to(device)  # [Total_atoms, 3]
+    if isinstance(delc_delx_t, np.ndarray):
+        delc_delx_t = torch.tensor(delc_delx_t, dtype=torch.float32)
+    delc_delx_t = delc_delx_t.to(device)  # [Total_atoms]
+    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
+
+    # Kベクトルの生成
+    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
+    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    num_k = K.shape[0]
+    
+    # 出力テンソルの初期化
+    Z = torch.zeros((num_crystals, num_k, num_atoms_max, 3), dtype=torch.float32, device=device)
+    
+
+    # 各結晶のデータをパディングしてバッチ化
+    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_delc = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
+    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
+
+    start = 0
+    for i in range(num_crystals):
+        n = num_atoms[i].item()
+        padded_m[i, :n] = m[start:start+n]
+        padded_c[i, :n] = c[start:start+n]
+        padded_delc[i, :n] = delc_delx_t[start:start+n]
+        padded_atom_types[i, :n] = atom_types[start:start+n]
+        start += n
+
+    # 散乱因子の計算
+    f_i = fq
+    f_j = fq
+
+    # ペアワイズの差分と和の計算
+    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
+    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
+    
+    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
+    diff_m = diff_m.to(torch.double)
+    K = K.to(torch.double)
+    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)  # [C, A_max, A_max, K]
+    
+    # r_c: [C, A_max, A_max, K] = dot(sum_c, K_squared)
+    sum_c = sum_c.to(torch.double)
+    K_squared = K ** 2  # [125, 3]
+    K_squared = K_squared.to(torch.double)
+    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_squared)  # [C, A_max, A_max, K]
+    
+    # 散乱因子の積
+    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
+    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
+    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
+    
+    # temp_result の計算
+    # -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
+    temp = -4 * (torch.pi ** 2) * K_squared  # [K, 3]
+    cos_term = torch.cos(2 * torch.pi * r_m)  # [C, A_max, A_max, K]
+    exp_term = torch.exp(-2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
+    
+    # delc_coords[i]: [C, A_max, 1, 1]
+    delc_i = padded_delc.unsqueeze(2)  # [C, A_max, 1, 3]
+    
+    # temp_result: [C, A_max, A_max, K, 3]
+    temp_result = (temp.unsqueeze(0).unsqueeze(0) * f_ij.unsqueeze(-1) * cos_term.unsqueeze(-1) * exp_term.unsqueeze(-1))  # [C, A_max, A_max, K, 3]
+
+    # delc_coords[i] を乗算
+    delc_i = delc_i.unsqueeze(3).expand(-1, -1, -1, num_k, -1)  # [C, A_max, A_max, 125, 3]
+    temp_result = temp_result * delc_i  # [C, A_max, A_max, K, 3]
+    
+    # j に対して合計
+    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K, 3]
+    sum_j = sum_j.permute(0, 2, 1, 3)  # [C, K, A_max, 3]
+    
+    # Z に格納
+    Z += sum_j  # [C, K, A_max, 3]
+
+    # 125を5x5x5に再構成
+    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
+    #print(Z[0][2][2][1])
+
+    Z[:, 2, 2, 2, :, :] = 0
+    #print(Z[0][2][2][2])
+
+    # Clamp を適用
+    Z = torch.clamp(Z, max=upper_limit)
+
+    # `inf` を `upper_limit` に置き換える
+    Z = torch.nan_to_num(Z, posinf=upper_limit, neginf=-upper_limit, nan=0.0)
+    
+    # 最後にZをnumpy.ndarrayに変換
+    Z_numpy = Z.cpu().numpy()
+    
+    return Z_numpy
+
+
+"""
+======================
+        Archive
+======================
+"""
+
+def calculate_q_magnitude(k_vector, lambda_wavelength=1.0):
+    # Ensure k_vector is a tuple
+    if isinstance(k_vector, list):
+        k_vector = tuple(k_vector)
+    
+    # Calculate the magnitude of the q vector from the k vector
+    return (2 * np.pi / lambda_wavelength) * np.linalg.norm(k_vector)
+
+def scattering_factor(atom_number, q):
+    
+    coefficients = cromer_mann_coefficients.get(atom_number.item())
+    if not coefficients:
+        raise ValueError(f"Atomic number {atom_number} not supported.")
+    
+    a = coefficients['a']
+    b = coefficients['b']
+    c = coefficients['c']
+    
+    f_q = sum([a[i] * np.exp(-b[i] * (q / (4 * np.pi)) ** 2) for i in range(4)]) + c
+    # print(atom_number, f_q)
+    return f_q
+
+def complex_sum_squared_with_scattering_factors(k, A_m, A_c, atom_types):
+    """
+    3次元ベクトル k と (n x 3) の行列 A、および散乱因子のリスト f を受け取り、
+    I(hkl) = |F(hkl)|^2 を計算する関数。
+    F(hkl) = sum_j f_j * exp(2 * pi * i * (hx_j + ky_j + lz_j))
+    I(hkl) = sum_j sum_k f_j * f_k * exp(2 * pi * i * ((x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l))
+
+    Parameters:
+    k (np.ndarray): 3次元ベクトル (h, k, l)
+    A (np.ndarray): (n x 3) の行列 (原子の分率座標)
+    f (np.ndarray): (n) の配列 (原子の散乱因子)
+
+    Returns:
+    float: 回折強度 I(hkl)
+    """
+    i = complex(0, 1)
+    pi = np.pi
+
+    # CUDAテンソルをCPUに移動させてNumPy配列に変換
+    if isinstance(A_m, torch.Tensor):
+        A_m = A_m.cpu().numpy()
+    if isinstance(A_c, torch.Tensor):
+        A_c= A_c.cpu().numpy()
+
+    # 行数を取得
+    n = A_m.shape[0]
+
+    # 回折強度 I(hkl) の計算
+    result = 0.0
+    for j in range(n):
+        for m in range(n):
+            f_j = scattering_factor(atom_types[j], calculate_q_magnitude(k))
+            f_m = scattering_factor(atom_types[m], calculate_q_magnitude(k))
+            diff = A_m[j] - A_m[m]
+            sum_c = A_c[j] + A_c[m]
+            r_m = np.dot(diff, k)
+            r_c = np.dot(sum_c, k**2)
+            result += f_j * f_m * np.exp(2 * pi * i * r_m - 2 * pi**2 * r_c)
+
+    # 結果の実部のみを返す
+    real_result = np.real(result)
+    # print(real_result)
+    return real_result / 10
 
 def complex_sum_squared_with_scattering_factors_torch(
     k_grid, A_m, A_c, atom_types, a_coeff, b_coeff, c_coeff
@@ -182,539 +752,105 @@ def complex_sum_squared_with_scattering_factors_torch(
     return real_I_hkl
 
 
-def calculate_delI_delm_delx_t_vectorized(batch, m, c, delm_delx_t):
+def scattering_factor_torch(atom_types, q_magnitude, a_coeff, b_coeff, c_coeff):
     """
-    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
+    PyTorchを使用して散乱因子を計算する関数。
     
-    Args:
-        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
-        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
-        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
-        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
-    
-    Returns:
-        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
-    """
-    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
-    num_atoms = batch['num_atoms'].to('cpu')  # [C]
-    num_crystals = num_atoms.size(0)
-    num_atoms_max = torch.max(num_atoms).item()
-    m = m.to(device)  # [Total_atoms, 3]
-    c = c.to(device)  # [Total_atoms, 3]
-    # numpy配列である場合、torch.Tensorに変換
-    if isinstance(delm_delx_t, np.ndarray):
-        delm_delx_t = torch.tensor(delm_delx_t, dtype=torch.float32)
-    delm_delx_t = delm_delx_t.to(device)  # [Total_atoms]
-    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
-    
-    # Kベクトルの生成
-    k_range = torch.arange(-2, 3, device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  # 各 [5,5,5]
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [125, 3]
-    num_k = K.shape[0]
-    
-    # 出力テンソルの初期化
-    Z = torch.zeros((num_crystals, num_k, num_atoms_max, 3), dtype=torch.float32, device=device)
-    
-    # クローマー・マン係数の初期化
-    a_coeff, b_coeff, c_coeff = initialize_coefficients(device=device)
-    
-    # 各結晶のデータをパディングしてバッチ化
-    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_delm = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
-
-    #print(m.shape)
-    #print(delm_delx_t.shape)
-    
-    start = 0
-    for i in range(num_crystals):
-        n = num_atoms[i].item()
-        padded_m[i, :n] = m[start:start+n]
-        padded_c[i, :n] = c[start:start+n]
-        padded_delm[i, :n] = delm_delx_t[start:start+n]
-        padded_atom_types[i, :n] = atom_types[start:start+n]
-        start += n
-    
-    # q の計算
-    q = (2 * torch.pi) * torch.norm(K, dim=-1)  # [125]
-    
-    # 散乱因子の計算
-    # f_i: [C, A_max, K]
-    f_i = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    f_j = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    #(f_i.shape)
-    
-    # ペアワイズの差分と和の計算
-    # diff_m: [C, A_max, A_max, 3]
-    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
-    #print(diff_m.shape)
-    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
-    #print(sum_c.shape)
-    
-    # Kベクトルを展開
-    # K: [K, 3] -> [1, 1, 1, K, 3]
-    K_expanded = K.view(1, 1, 1, num_k, 3)
-    #print(K.shape)
-
-    diff_m = diff_m.to(torch.double)
-    K = K.to(torch.double)
-    
-    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
-    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
-    #print(r_m.shape)
-    
-    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
-    K_sq = K ** 2  # [K, 3]
-    sum_c = sum_c.to(torch.double)
-    K_sq = K_sq.to(torch.double)
-    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
-    
-    # 散乱因子の積
-    # f_i: [C, A_max, K], f_j: [C, A_max, K]
-    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
-    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
-    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
-    
-    # temp_result の計算
-    # -4πK: [K, 3]
-    temp = -4 * torch.pi * K  # [K, 3]
-    # sin と exp の計算
-    sin_term = torch.sin(2 * torch.pi * r_m)  # [C, A_max, A_max, K]
-    exp_term = torch.exp(-2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
-    
-    # delm_coords[i]: [C, A_max, 1, 1]
-    delm_i = padded_delm.unsqueeze(2) # [C, A_max, 1, 1]
-    #(delm_i.shape)
-
-    
-    # temp_result: [C, A_max, A_max, K, 3]
-    temp_result = (temp.unsqueeze(0).unsqueeze(0) * f_ij.unsqueeze(-1) * sin_term.unsqueeze(-1) * exp_term.unsqueeze(-1))  # [C, A_max, A_max, K, 3]
-
-    # delm_coords[i] を乗算
-    #print(temp_result.shape)
-    # delm_i の形状を [16, 5, 5, 125, 3] に揃える
-    delm_i = delm_i.unsqueeze(3)  # [16, 5, 1, 1, 3]
-    #print(delm_i.shape)
-    delm_i = delm_i.expand(-1, -1, 5, 125, -1)  # [16, 5, 5, 125, 3]
-    #print(delm_i.shape)
-    temp_result = temp_result * delm_i  # [C, A_max, A_max, K, 3]
-    
-    # j に対して合計
-    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K, 3]
-    sum_j = sum_j.permute(0, 2, 1, 3)  # [C, K, A_max, 3]
-    #print(sum_j.shape)
-    
-    # Z に格納
-    Z += sum_j  # [C, K, A_max, 3]
-
-    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
-    
-    # 最後にZをnumpy.ndarrayに変換
-    Z_numpy = Z.cpu().numpy()
-    
-    return Z_numpy
-
-
-def calculate_y_vectorized_re(batch, c):
-    """
-    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
-    
-    Args:
-        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
-        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
-        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
-        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
-    
-    Returns:
-        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
-    """
-    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
-    num_atoms = batch['num_atoms'].to('cpu')  # [C]
-    num_crystals = num_atoms.size(0)
-    num_atoms_max = torch.max(num_atoms).item()
-    m = batch['frac_coords']
-    c = c.to(device)  # [Total_atoms, 3]
-    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
-    
-    # Kベクトルの生成
-    k_range = torch.arange(-2, 3, device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  # 各 [5,5,5]
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [125, 3]
-    num_k = K.shape[0]
-    
-    # 出力テンソルの初期化
-    Z = torch.zeros((num_crystals, num_k), dtype=torch.float32, device=device)
-    
-    # クローマー・マン係数の初期化
-    a_coeff, b_coeff, c_coeff = initialize_coefficients(device=device)
-    
-    # 各結晶のデータをパディングしてバッチ化
-    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
-    
-    start = 0
-    for i in range(num_crystals):
-        n = num_atoms[i].item()
-        padded_m[i, :n] = m[start:start+n]
-        padded_c[i, :n] = c[start:start+n]
-        padded_atom_types[i, :n] = atom_types[start:start+n]
-        start += n
-    
-    # q の計算
-    q = (2 * torch.pi) * torch.norm(K, dim=-1)  # [125]
-    
-    # 散乱因子の計算
-    # f_i: [C, A_max, K]
-    f_i = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    f_j = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    #(f_i.shape)
-    
-    # ペアワイズの差分と和の計算
-    # diff_m: [C, A_max, A_max, 3]
-    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
-    #print(diff_m.shape)
-    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
-    #print(sum_c.shape)
-    
-    # Kベクトルを展開
-    # K: [K, 3] -> [1, 1, 1, K, 3]
-    K_expanded = K.view(1, 1, 1, num_k, 3)
-    #print(K.shape)
-
-    diff_m = diff_m.to(torch.double)
-    K = K.to(torch.double)
-    
-    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
-    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
-    #print(r_m.shape)
-    
-    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
-    K_sq = K ** 2  # [K, 3]
-    sum_c = sum_c.to(torch.double)
-    K_sq = K_sq.to(torch.double)
-    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
-    
-    # 散乱因子の積
-    # f_i: [C, A_max, K], f_j: [C, A_max, K]
-    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
-    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
-    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
-    
-    # sin と exp の計算
-    exp_term = torch.exp(2 * torch.pi * 1j * r_m - 2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
-    
-    # temp_result: [C, A_max, A_max, K]
-    temp_result = (f_ij * exp_term)  # [C, A_max, A_max, K]
-    # print(temp_result.shape)
-    
-    # j に対して合計
-    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K]
-    # print(sum_j.shape)
-    sum_j = torch.sum(sum_j, dim=1)
-    # print(sum_j.shape)
-
-    sum_j = sum_j.real / 10
-    
-    # Z に格納
-    Z += sum_j  # [C, K]
-    Z = Z.view(num_crystals, 5, 5, 5)
-    
-    # 最後にZをnumpy.ndarrayに変換
-    Z_numpy = Z.cpu().numpy()
-    
-    return Z_numpy
-
-def calculate_I_vectorized_re(batch, m, c):
-    """
-    バッチ内の全ての結晶に対して構造因子のx_t微分を計算する関数。
-    
-    Args:
-        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
-        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
-        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
-        delm_delx_t (torch.Tensor): delm/delx_t テンソル [Total_atoms]
-    
-    Returns:
-        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
-    """
-    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
-    num_atoms = batch['num_atoms'].to('cpu')  # [C]
-    num_crystals = num_atoms.size(0)
-    num_atoms_max = torch.max(num_atoms).item()
-    m = m.to(device)
-    c = c.to(device)  # [Total_atoms, 3]
-    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
-    
-    # Kベクトルの生成
-    k_range = torch.arange(-2, 3, device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  # 各 [5,5,5]
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [125, 3]
-    num_k = K.shape[0]
-    
-    # 出力テンソルの初期化
-    Z = torch.zeros((num_crystals, num_k), dtype=torch.float32, device=device)
-    
-    # クローマー・マン係数の初期化
-    a_coeff, b_coeff, c_coeff = initialize_coefficients(device=device)
-    
-    # 各結晶のデータをパディングしてバッチ化
-    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
-    
-    start = 0
-    for i in range(num_crystals):
-        n = num_atoms[i].item()
-        padded_m[i, :n] = m[start:start+n]
-        padded_c[i, :n] = c[start:start+n]
-        padded_atom_types[i, :n] = atom_types[start:start+n]
-        start += n
-    
-    # q の計算
-    q = (2 * torch.pi) * torch.norm(K, dim=-1)  # [125]
-    
-    # 散乱因子の計算
-    # f_i: [C, A_max, K]
-    f_i = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    f_j = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    #(f_i.shape)
-    
-    # ペアワイズの差分と和の計算
-    # diff_m: [C, A_max, A_max, 3]
-    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
-    #print(diff_m.shape)
-    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
-    #print(sum_c.shape)
-    
-    # Kベクトルを展開
-    # K: [K, 3] -> [1, 1, 1, K, 3]
-    K_expanded = K.view(1, 1, 1, num_k, 3)
-    #print(K.shape)
-
-    diff_m = diff_m.to(torch.double)
-    K = K.to(torch.double)
-    
-    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
-    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)
-    #print(r_m.shape)
-    
-    # r_c: [C, A_max, A_max, K] = dot(sum_c, K^2)
-    K_sq = K ** 2  # [K, 3]
-    sum_c = sum_c.to(torch.double)
-    K_sq = K_sq.to(torch.double)
-    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_sq)  # [C, A_max, A_max, K]
-    
-    # 散乱因子の積
-    # f_i: [C, A_max, K], f_j: [C, A_max, K]
-    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
-    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
-    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
-    
-    # sin と exp の計算
-    exp_term = torch.exp(2 * torch.pi * 1j * r_m - 2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
-    
-    # temp_result: [C, A_max, A_max, K]
-    temp_result = (f_ij * exp_term)  # [C, A_max, A_max, K]
-    # print(temp_result.shape)
-    
-    # j に対して合計
-    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K]
-    # print(sum_j.shape)
-    sum_j = torch.sum(sum_j, dim=1)
-    # print(sum_j.shape)
-
-    sum_j = sum_j.real / 10
-    
-    # Z に格納
-    Z += sum_j  # [C, K]
-    Z = Z.view(num_crystals, 5, 5, 5)
-    
-    # 最後にZをnumpy.ndarrayに変換
-    Z_numpy = Z.cpu().numpy()
-    
-    return Z_numpy
-
-def calculate_delI_delc_delx_t_vectorized(batch, m, c, delc_delx_t):
-    """
-    バッチ内の全ての結晶に対して構造因子のc_t微分を計算する関数。
-    
-    Args:
-        batch (dict): バッチ情報を含む辞書。必要なキーは 'num_atoms' と 'atom_types'。
-        m (torch.Tensor): m 座標テンソル [Total_atoms, 3]
-        c (torch.Tensor): c 座標テンソル [Total_atoms, 3]
-        delc_delx_t (torch.Tensor): delc/delx_t テンソル [Total_atoms]
-    
-    Returns:
-        np.ndarray: 計算された Z テンソル [C, 5, 5, 5, num_atoms_max, 3]
-    """
-    device = batch['frac_coords'].device if 'frac_coords' in batch else 'cpu'
-    num_atoms = batch['num_atoms'].to('cpu')  # [C]
-    num_crystals = num_atoms.size(0)
-    num_atoms_max = torch.max(num_atoms).item()
-    m = m.to(device)  # [Total_atoms, 3]
-    c = c.to(device)  # [Total_atoms, 3]
-    if isinstance(delc_delx_t, np.ndarray):
-        delc_delx_t = torch.tensor(delc_delx_t, dtype=torch.float32)
-    delc_delx_t = delc_delx_t.to(device)  # [Total_atoms]
-    atom_types = batch['atom_types'].to(device)  # [Total_atoms]
-
-    # Kベクトルの生成
-    k_range = torch.arange(-2, 3, device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  # 各 [5,5,5]
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [125, 3]
-    num_k = K.shape[0]
-    
-    # 出力テンソルの初期化
-    Z = torch.zeros((num_crystals, num_k, num_atoms_max, 3), dtype=torch.float32, device=device)
-    
-    # クローマー・マン係数の初期化
-    a_coeff, b_coeff, c_coeff = initialize_coefficients(device=device)
-
-    # 各結晶のデータをパディングしてバッチ化
-    padded_m = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_c = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_delc = torch.zeros((num_crystals, num_atoms_max, 3), dtype=torch.float32, device=device)
-    padded_atom_types = torch.zeros((num_crystals, num_atoms_max), dtype=torch.long, device=device)
-
-    start = 0
-    for i in range(num_crystals):
-        n = num_atoms[i].item()
-        padded_m[i, :n] = m[start:start+n]
-        padded_c[i, :n] = c[start:start+n]
-        padded_delc[i, :n] = delc_delx_t[start:start+n]
-        padded_atom_types[i, :n] = atom_types[start:start+n]
-        start += n
-
-    # q の計算
-    q = (2 * torch.pi) * torch.norm(K, dim=-1)  # [125]
-    K_squared = K ** 2  # [125, 3]
-
-    # 散乱因子の計算
-    f_i = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-    f_j = scattering_factor_torch_batch(padded_atom_types, q, a_coeff, b_coeff, c_coeff)  # [C, A_max, K]
-
-    # ペアワイズの差分と和の計算
-    diff_m = padded_m.unsqueeze(2) - padded_m.unsqueeze(1)  # [C, A_max, A_max, 3]
-    sum_c = padded_c.unsqueeze(2) + padded_c.unsqueeze(1)    # [C, A_max, A_max, 3]
-    
-    # r_m: [C, A_max, A_max, K] = dot(diff_m, K)
-    diff_m = diff_m.to(torch.double)
-    K = K.to(torch.double)
-    r_m = torch.einsum('...ij,kj->...ik', diff_m, K)  # [C, A_max, A_max, K]
-    
-    # r_c: [C, A_max, A_max, K] = dot(sum_c, K_squared)
-    sum_c = sum_c.to(torch.double)
-    K_squared = K_squared.to(torch.double)
-    r_c = torch.einsum('...ij,kj->...ik', sum_c, K_squared)  # [C, A_max, A_max, K]
-    
-    # 散乱因子の積
-    f_i_expand = f_i.unsqueeze(2)  # [C, A_max, 1, K]
-    f_j_expand = f_j.unsqueeze(1)  # [C, 1, A_max, K]
-    f_ij = f_i_expand * f_j_expand  # [C, A_max, A_max, K]
-    
-    # temp_result の計算
-    # -4 * np.pi**2 * K_squared * np.cos(2 * np.pi * r_m) * np.exp(-2 * np.pi**2 * r_c)
-    temp = -4 * (torch.pi ** 2) * K_squared  # [K, 3]
-    cos_term = torch.cos(2 * torch.pi * r_m)  # [C, A_max, A_max, K]
-    exp_term = torch.exp(-2 * (torch.pi ** 2) * r_c)  # [C, A_max, A_max, K]
-    
-    # delc_coords[i]: [C, A_max, 1, 1]
-    delc_i = padded_delc.unsqueeze(2)  # [C, A_max, 1, 3]
-    
-    # temp_result: [C, A_max, A_max, K, 3]
-    temp_result = (temp.unsqueeze(0).unsqueeze(0) * f_ij.unsqueeze(-1) * cos_term.unsqueeze(-1) * exp_term.unsqueeze(-1))  # [C, A_max, A_max, K, 3]
-
-    # delc_coords[i] を乗算
-    delc_i = delc_i.unsqueeze(3).expand(-1, -1, 5, 125, -1)  # [C, A_max, 5, 125, 3]
-    temp_result = temp_result * delc_i  # [C, A_max, A_max, K, 3]
-    
-    # j に対して合計
-    sum_j = torch.sum(temp_result, dim=2)  # [C, A_max, K, 3]
-    sum_j = sum_j.permute(0, 2, 1, 3)  # [C, K, A_max, 3]
-    
-    # Z に格納
-    Z += sum_j  # [C, K, A_max, 3]
-
-    # 125を5x5x5に再構成
-    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
-    
-    # 最後にZをnumpy.ndarrayに変換
-    Z_numpy = Z.cpu().numpy()
-    
-    return Z_numpy
-
-
-"""
-======================
-        Archive
-======================
-"""
-
-def calculate_q_magnitude(k_vector, lambda_wavelength=1.0):
-    # Ensure k_vector is a tuple
-    if isinstance(k_vector, list):
-        k_vector = tuple(k_vector)
-    
-    # Calculate the magnitude of the q vector from the k vector
-    return (2 * np.pi / lambda_wavelength) * np.linalg.norm(k_vector)
-
-def scattering_factor(atom_number, q):
-    
-    coefficients = cromer_mann_coefficients.get(atom_number.item())
-    if not coefficients:
-        raise ValueError(f"Atomic number {atom_number} not supported.")
-    
-    a = coefficients['a']
-    b = coefficients['b']
-    c = coefficients['c']
-    
-    f_q = sum([a[i] * np.exp(-b[i] * (q / (4 * np.pi)) ** 2) for i in range(4)]) + c
-    # print(atom_number, f_q)
-    return f_q
-
-def complex_sum_squared_with_scattering_factors(k, A_m, A_c, atom_types):
-    """
-    3次元ベクトル k と (n x 3) の行列 A、および散乱因子のリスト f を受け取り、
-    I(hkl) = |F(hkl)|^2 を計算する関数。
-    F(hkl) = sum_j f_j * exp(2 * pi * i * (hx_j + ky_j + lz_j))
-    I(hkl) = sum_j sum_k f_j * f_k * exp(2 * pi * i * ((x_j - x_k)h + (y_j - y_k)k + (z_j - z_k)l))
-
     Parameters:
-    k (np.ndarray): 3次元ベクトル (h, k, l)
-    A (np.ndarray): (n x 3) の行列 (原子の分率座標)
-    f (np.ndarray): (n) の配列 (原子の散乱因子)
-
+    - atom_types (torch.Tensor): 形状 (n_atoms,) のテンソル。各原子の原子番号。
+    - q_magnitude (torch.Tensor): 形状 (num_k,) のテンソル。各kベクトルのqの大きさ。
+    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
+    
     Returns:
-    float: 回折強度 I(hkl)
+    - f_q (torch.Tensor): 形状 (n_atoms, num_k) のテンソル。各原子の散乱因子。
     """
-    i = complex(0, 1)
-    pi = np.pi
+    pi = torch.pi
+    a = a_coeff[atom_types]  # shape (n_atoms, 4)
+    b = b_coeff[atom_types]  # shape (n_atoms, 4)
+    c = c_coeff[atom_types]  # shape (n_atoms,)
+    
+    # Reshape for broadcasting
+    a = a.unsqueeze(-1)  # (n_atoms, 4, 1)
+    b = b.unsqueeze(-1)  # (n_atoms, 4, 1)
+    q = q_magnitude.unsqueeze(0).unsqueeze(0)  # (1, 1, num_k)
+    
+    # Compute the exponent component
+    exp_component = torch.exp(-b * (q / (4 * pi))**2)  # (n_atoms, 4, num_k)
 
-    # CUDAテンソルをCPUに移動させてNumPy配列に変換
-    if isinstance(A_m, torch.Tensor):
-        A_m = A_m.cpu().numpy()
-    if isinstance(A_c, torch.Tensor):
-        A_c= A_c.cpu().numpy()
+    # Compute f_q: sum over j=1 to 4 of a_j * exp_component + c
+    f_q = torch.sum(a * exp_component, dim=1) + c.unsqueeze(1)  # (n_atoms, num_k)
+    
+    return f_q  # shape (n_atoms, num_k)
 
-    # 行数を取得
-    n = A_m.shape[0]
 
-    # 回折強度 I(hkl) の計算
-    result = 0.0
-    for j in range(n):
-        for m in range(n):
-            f_j = scattering_factor(atom_types[j], calculate_q_magnitude(k))
-            f_m = scattering_factor(atom_types[m], calculate_q_magnitude(k))
-            diff = A_m[j] - A_m[m]
-            sum_c = A_c[j] + A_c[m]
-            r_m = np.dot(diff, k)
-            r_c = np.dot(sum_c, k**2)
-            result += f_j * f_m * np.exp(2 * pi * i * r_m - 2 * pi**2 * r_c)
+def initialize_coefficients(device='cuda:0'):
+    """
+    クローマー・マン係数を PyTorch テンソルとして初期化する関数。
+    
+    Parameters:
+    - cromer_mann_coefficients (dict): 原子番号をキーとし、係数を含む辞書。
+    - device (str): テンソルを配置するデバイス。
+    
+    Returns:
+    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
+    """
+    max_atom_type = max(cromer_mann_coefficients.keys())  # 最大原子番号を取得
+    a_coeff = torch.zeros((max_atom_type+1, 4), device=device, dtype=torch.float32)  # 形状 (82, 4)
+    b_coeff = torch.zeros((max_atom_type+1, 4), device=device, dtype=torch.float32)  # 形状 (82, 4)
+    c_coeff = torch.zeros((max_atom_type+1), device=device, dtype=torch.float32)     # 形状 (82,)
+    
+    for atom, coeff in cromer_mann_coefficients.items():
+        a_coeff[atom] = torch.tensor(coeff['a'], device=device, dtype=torch.float32)
+        b_coeff[atom] = torch.tensor(coeff['b'], device=device, dtype=torch.float32)
+        c_coeff[atom] = torch.tensor(coeff['c'], device=device, dtype=torch.float32)
+    
+    return a_coeff, b_coeff, c_coeff
 
-    # 結果の実部のみを返す
-    real_result = np.real(result)
-    # print(real_result)
-    return real_result / 10
+
+def scattering_factor_torch_batch(atom_types, q_magnitude, a_coeff, b_coeff, c_coeff):
+    """
+    PyTorchを使用して散乱因子を計算する関数（バッチ対応）。
+    
+    Parameters:
+    - atom_types (torch.Tensor): 形状 (C, A_max) のテンソル。各原子の原子番号。
+    - q_magnitude (torch.Tensor): 形状 (num_k,) のテンソル。各kベクトルのqの大きさ。
+    - a_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - b_coeff (torch.Tensor): 形状 (max_atom_type+1, 4) のテンソル。
+    - c_coeff (torch.Tensor): 形状 (max_atom_type+1,) のテンソル。
+    
+    Returns:
+    - f_q (torch.Tensor): 形状 (C, A_max, num_k) のテンソル。各原子の散乱因子。
+    """
+    pi = torch.pi
+    C, A_max = atom_types.shape  # バッチのサイズと最大の原子数を取得
+    
+    # a, b, c の各係数を atom_types から選択
+    a = a_coeff[atom_types]  # shape (C, A_max, 4)
+    b = b_coeff[atom_types]  # shape (C, A_max, 4)
+    c = c_coeff[atom_types]  # shape (C, A_max)
+    
+    # Reshape for broadcasting
+    a = a.unsqueeze(-1)  # (C, A_max, 4, 1)
+    b = b.unsqueeze(-1)  # (C, A_max, 4, 1)
+    q = q_magnitude.unsqueeze(0).unsqueeze(0).unsqueeze(0)  # (1, 1, 1, num_k)
+    
+    # Compute the exponent component
+    exp_component = torch.exp(-b * (q / (4 * pi))**2)  # (C, A_max, 4, num_k)
+    
+    # Compute f_q: sum over j=1 to 4 of a_j * exp_component + c
+    f_q = torch.sum(a * exp_component, dim=2) + c.unsqueeze(-1)  # (C, A_max, num_k)
+    
+    return f_q  # shape (C, A_max, num_k)
+
+
+# クローマー・マン係数の定義
+cromer_mann_coefficients = {
+    27: {'a': [15.7924, 6.1253, 3.28719, 1.64550], 'b': [2.77200, 0.90200, 0.21700, 9.25200], 'c': 1.79131},
+    81: {'a': [29.2024, 15.1492, 14.5606, 5.98054], 'b': [1.14430, 10.0593, 0.21100, 27.0701], 'c': 13.4307},
+    7:  {'a': [12.2126, 3.13220, 2.01250, 1.16630], 'b': [0.00570, 9.89330, 28.9975, 0.58260], 'c': -11.529},
+    8:  {'a': [3.0485, 2.2868, 1.5463, 0.8670], 'b': [13.2771, 5.7011, 0.3239, 32.9089], 'c': 0.2508}
+}

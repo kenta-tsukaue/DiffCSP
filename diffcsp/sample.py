@@ -138,7 +138,28 @@ def run(cfg: DictConfig) -> None:
     #これはeasy_structure_3
     #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-03/train_d1_44/epoch=29634-step=1185400.ckpt"
     #これはeasy_structure_4
-    ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-13/train_d1_46/epoch=18539-step=741600.ckpt"
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-13/train_d1_46/epoch=18539-step=741600.ckpt"
+
+    # 48: perov_5
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-18/train_d1_48/epoch=924-step=11100.ckpt"
+
+    # 49: carbon_24
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-18/train_d1_49/epoch=5359-step=128640.ckpt"
+
+    # 50: mpts_52
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-09-18/train_d1_50/epoch=469-step=100580.ckpt"
+
+    # 51: Cu3Au
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-10-16/train_d1_51/epoch=11729-step=469200.ckpt"
+
+    # 51_2: Cu3Au
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-10-16/train_d1_51_2/epoch=3264-step=130600.ckpt"
+
+    # 51_3: Cu3Au
+    #ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-10-16/train_d1_51_3/epoch=8909-step=356400.ckpt"
+
+    # 51_4: Cu3Au
+    ckpt = "/public/tsukaue/DiffCSP/hydra/singlerun/2024-10-16/train_d1_51_4/epoch=14809-step=592400.ckpt"
 
     checkpoint = torch.load(ckpt)
     model.load_state_dict(checkpoint['state_dict'])
@@ -147,19 +168,34 @@ def run(cfg: DictConfig) -> None:
     model.to("cuda")
 
     datamodule.setup()
-    test_dataloader = datamodule.test_dataloader()[0]
+    #test_dataloader = datamodule.test_dataloader()[0] # test data
+    #test_dataloader = datamodule.val_dataloader()[0] # val data
+    test_dataloader = datamodule.train_dataloader(shuffle = False) # train data
     for batch_idx, batch in enumerate(test_dataloader):
         batch = batch.to("cuda")
         print(f"Test Batch {batch_idx + 1}: {batch}")
-        if batch_idx == 0:
-            torch.save(batch, 'batch.pt')
-            traj, traj_stack, loss_list = model.sample_new_method(batch)
-            #traj, traj_stack, loss_list = model.sample(batch)
-            # Save traj and batch to files
-            loss_tensor = torch.tensor(loss_list)
-            torch.save(loss_tensor, 'loss_tensor.pt')
-            torch.save(traj, 'traj.pt')
-            torch.save(batch, 'batch.pt')
+        """#traj, traj_stack, batch_loss_list, loss_list = model.sample_new_method(batch)
+        traj, traj_stack, batch_loss_list, loss_list = model.sample(batch)
+        # Save traj and batch to files
+        loss_tensor = torch.tensor(loss_list)
+        batch_loss_tensor = torch.tensor(batch_loss_list)
+        torch.save(loss_tensor, 'loss_tensor.pt')
+        torch.save(batch_loss_tensor, 'batch_loss_tensor.pt')
+        torch.save(traj, 'traj.pt')
+        torch.save(batch, 'batch.pt')"""
+
+        traj, traj_new, batch_loss_list, loss_list, batch_loss_list_new, loss_list_new = model.sample_new_method_and_random(batch)
+        loss_tensor = torch.tensor(loss_list)
+        batch_loss_tensor = torch.tensor(batch_loss_list)
+        loss_tensor_new = torch.tensor(loss_list_new)
+        batch_loss_tensor_new = torch.tensor(batch_loss_list_new)
+        torch.save(loss_tensor, f'loss_tensor_{batch_idx}.pt')
+        torch.save(loss_tensor_new, f'loss_tensor_new_{batch_idx}.pt')
+        torch.save(batch_loss_tensor, f'batch_loss_tensor_{batch_idx}.pt')
+        torch.save(batch_loss_tensor_new, f'batch_loss_tensor_new_{batch_idx}.pt')
+        torch.save(traj, f'traj_{batch_idx}.pt')
+        torch.save(traj_new, f'traj_new_{batch_idx}.pt')
+        torch.save(batch, f'batch_{batch_idx}.pt')
 
 @hydra.main(config_path=str(PROJECT_ROOT / "conf"), config_name="default", version_base="1.1" )
 def main(cfg: omegaconf.DictConfig):
