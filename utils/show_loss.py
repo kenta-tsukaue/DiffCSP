@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import japanize_matplotlib
 
 # ファイルパス
-file_1 = 'sample/sample_d1_48_100_0/batch_loss_tensor.pt'
-file_2 = 'sample/sample_d1_48_100/batch_loss_tensor.pt'
+file_1 = 'sample/sample_d1_48_104_1/batch_loss_tensor_0.pt'
+file_2 = 'sample/sample_d1_48_104_1/batch_loss_tensor_new_0.pt'
 
 # テンソルを読み込む
 tensor_1 = torch.load(file_1)

@@ -5,9 +5,9 @@ import torch
 
 def main():
     # 真の結晶構造のデータの呼び出し、データをCPUにマッピング
-    true_batch = torch.load('sample/sample_d1_48_4_1/batch.pt', map_location=torch.device('cpu'))
+    true_batch = torch.load('sample/sample_d1_51_4_0/batch_0.pt', map_location=torch.device('cpu'))
     # 予測された結晶構造のデータの呼び出し、データをCPUにマッピング
-    predicted_batch = torch.load('sample/sample_d1_48_4_1/traj.pt', map_location=torch.device('cpu'))
+    predicted_batch = torch.load('sample/sample_d1_51_4_0/traj_new_0.pt', map_location=torch.device('cpu'))
 
     num_crystals = true_batch['num_atoms'].size(0)  # バッチサイズ
 
@@ -22,6 +22,7 @@ def main():
 
         true_frac_coords = true_batch['frac_coords'][true_start_index:true_end_index]
         true_atom_types = true_batch['atom_types'][true_start_index:true_end_index]
+        #print(true_atom_types)
         true_lengths = true_batch['lengths'][i]
         true_angles = true_batch['angles'][i]
 
@@ -42,8 +43,6 @@ def main():
         # 構造の一致度を確認
         if matcher.fit(true_structure, predicted_structure):
             score += 1
-        else:
-            print(i)
 
     print(f"一致率:{score/num_crystals}")
 

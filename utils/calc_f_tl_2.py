@@ -20,7 +20,7 @@ def create_tlcon2o_crystals():
     }
     line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
     frac_coords_1 = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
-    atom_types_1 = [27, 7, 7, 8, 81]
+    atom_types_1 = [29, 29, 29, 8, 81]
 
     
     # 二つ目の結晶 TlCoN2O のデータ (line配置)
