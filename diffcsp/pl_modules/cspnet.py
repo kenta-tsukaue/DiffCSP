@@ -158,10 +158,11 @@ class CSPNet(nn.Module):
         tensor_ordered = tensor_cat[reorder_idx]
         return tensor_ordered
 
+    """
     def reorder_symmetric_edges(
         self, edge_index, cell_offsets, neighbors, edge_vector
     ):
-        """
+        
         Reorder edges to make finding counter-directional edges easier.
 
         Some edges are only present in one direction in the data,
@@ -171,7 +172,7 @@ class CSPNet(nn.Module):
         We could fix this by merging edge_index with its counter-edges,
         including the cell_offsets, and then running torch.unique.
         But this does not seem worth it.
-        """
+        
 
         # Generate mask
         mask_sep_atoms = edge_index[0] < edge_index[1]
@@ -233,7 +234,70 @@ class CSPNet(nn.Module):
             cell_offsets_new,
             neighbors_new,
             edge_vector_new,
+        )"""
+    
+    def reorder_symmetric_edges(
+        self, edge_index, cell_offsets, neighbors, edge_vector
+    ):
+        # Generate mask
+        mask_sep_atoms = edge_index[0] < edge_index[1]
+        cell_earlier = (
+            (cell_offsets[:, 0] < 0)
+            | ((cell_offsets[:, 0] == 0) & (cell_offsets[:, 1] < 0))
+            | (
+                (cell_offsets[:, 0] == 0)
+                & (cell_offsets[:, 1] == 0)
+                & (cell_offsets[:, 2] < 0)
+            )
         )
+        mask_same_atoms = edge_index[0] == edge_index[1]
+        mask_same_atoms &= cell_earlier
+        mask = mask_sep_atoms | mask_same_atoms
+
+        edge_index_new = edge_index[mask[None, :].expand(2, -1)].view(2, -1)
+        edge_index_cat = torch.cat(
+            [
+                edge_index_new,
+                torch.stack([edge_index_new[1], edge_index_new[0]], dim=0),
+            ],
+            dim=1,
+        )
+
+        batch_edge = torch.repeat_interleave(
+            torch.arange(neighbors.size(0), device=edge_index.device),
+            neighbors,
+        )
+        batch_edge = batch_edge[mask]
+        
+        # Temporarily disable deterministic algorithms for bincount
+        torch.use_deterministic_algorithms(False)
+        neighbors_new = 2 * torch.bincount(
+            batch_edge, minlength=neighbors.size(0)
+        )
+        torch.use_deterministic_algorithms(True)  # Re-enable deterministic algorithms
+
+        edge_reorder_idx = repeat_blocks(
+            neighbors_new // 2,
+            repeats=2,
+            continuous_indexing=True,
+            repeat_inc=edge_index_new.size(1),
+        )
+
+        edge_index_new = edge_index_cat[:, edge_reorder_idx]
+        cell_offsets_new = self.select_symmetric_edges(
+            cell_offsets, mask, edge_reorder_idx, True
+        )
+        edge_vector_new = self.select_symmetric_edges(
+            edge_vector, mask, edge_reorder_idx, True
+        )
+
+        return (
+            edge_index_new,
+            cell_offsets_new,
+            neighbors_new,
+            edge_vector_new,
+        )
+    
 
     def gen_edges(self, num_atoms, frac_coords, lattices, node2graph):
 

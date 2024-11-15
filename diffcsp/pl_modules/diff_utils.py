@@ -100,6 +100,18 @@ def calculate_s1(m, c, x_t):
     s1_result = -np.sum(k / 2 * (erf_term1 - erf_term2), axis=0) + m_expanded
     return s1_result
 
+def calculate_s1_2(m, c, x_t):
+    k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
+    xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
+    m_expanded = m - xt_expanded  # (1, n, d)
+
+    erf_term1 = erf((-(1/2) + k + m_expanded) / np.sqrt(2 * c))
+    erf_term2 = erf((1/2 + k + m_expanded) / np.sqrt(2 * c))
+    exp_term1 = np.exp(-((-(1/2) + k + m_expanded) ** 2 / (2 * c)))
+    exp_term2 = np.exp(-((1/2 + k + m_expanded) ** 2 / (2 * c)))
+    s1_result = -np.sum(np.sqrt(2 / (np.pi * c)) * (exp_term1 - exp_term2) + k / 2 * (erf_term1 - erf_term2), axis=0)
+    return s1_result
+
 def calculate_s2(m, c, x_t):
     k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
     xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
@@ -114,6 +126,22 @@ def calculate_s2(m, c, x_t):
     term2 = -np.sum(1/2 * (k ** 2 + 2 * k * m_expanded) * (erf_term1 - erf_term2), axis=0)
     
     s2_result = term1 + term2 + c + m_expanded ** 2
+    return s2_result
+
+def calculate_s2_2(m, c, x_t):
+    k = np.arange(-10, 11)[:, np.newaxis, np.newaxis]  # (21, 1, 1)
+    xt_expanded = x_t[np.newaxis, :, :]  # (1, n, d)
+    m_expanded = m - xt_expanded  # (1, n, d)
+
+    exp_term1 = np.exp(-((-(1/2) + k + m_expanded) ** 2 / (2 * c)))
+    exp_term2 = np.exp(-((1/2 + k + m_expanded) ** 2 / (2 * c)))
+    term1 = -np.sqrt(c / (2 * pi)) * np.sum(1/2 * (exp_term1 + exp_term2) + k * (exp_term1 - exp_term2), axis=0)
+    
+    erf_term1 = erf((-(1/2) + k + m_expanded) / np.sqrt(2 * c))
+    erf_term2 = erf((1/2 + k + m_expanded) / np.sqrt(2 * c))
+    term2 = -np.sum(1/2 * k**2 * (erf_term1 - erf_term2), axis=0)
+    
+    s2_result = term1 + term2
     return s2_result
 
 def generate_tables(x_t):
@@ -131,6 +159,26 @@ def generate_tables(x_t):
         for j, c in enumerate(c_values):
             s1_results = calculate_s1(m, c, x_t_cpu)
             s2_results = calculate_s2(m, c, x_t_cpu)
+            s1_table[:, :, i, j] = s1_results
+            s2_table[:, :, i, j] = s2_results
+    
+    return s1_table, s2_table, m_values, c_values
+
+def generate_tables_2(x_t):
+    x_t_cpu = x_t.cpu().detach().numpy()
+    m_values = np.arange(-0.5, 0.5 + 1/20, 1/20)
+    c_values = np.arange(1e-2, 2e-2, 1/10)
+    #m_values = np.arange(-0.5, 0.5 + 1/20, 1/5000)
+    #c_values = np.arange(1e-3, 1e-2, 1e-3)
+
+    n, d = x_t_cpu.shape
+    s1_table = np.zeros((n, d, len(m_values), len(c_values)))
+    s2_table = np.zeros((n, d, len(m_values), len(c_values)))
+    
+    for i, m in enumerate(m_values):
+        for j, c in enumerate(c_values):
+            s1_results = calculate_s1_2(m, c, x_t_cpu)
+            s2_results = calculate_s2_2(m, c, x_t_cpu)
             s1_table[:, :, i, j] = s1_results
             s2_table[:, :, i, j] = s2_results
     
@@ -156,6 +204,7 @@ def find_best_fit_optimized(s1_table, s2_table, m_table, c_table, score1, score2
 
     # エラーをベクトル化して計算
     err = (sigma2_score1 - s1_table) ** 2 + (sigma4_score2 + sigma2 - s2_table) ** 2
+    #err = (sigma2_score1 - s1_table) ** 2 + (sigma4_score2 + sigma2_score1**2 - s2_table) ** 2
 
     # エラーの最小値のインデックスを取得
     err = err.view(n, d, -1)  # 形状を (n, d, m_len * c_len) に変更
@@ -190,7 +239,7 @@ def find_best_fit_optimized_2(s1_table, s2_table, m_table, c_table, score1, scor
 
     # スコアを計算（ブロードキャストを利用）
     sigma2_score1 = (sigma2 * score1).unsqueeze(-1)  # 形状 (n, d, 1)
-    sigma4_score2 = (sigma4 * score2 + sigma2).unsqueeze(-1)  # 形状 (n, d, 1)
+    sigma4_score2 = (sigma4 * score2 + (sigma2 * score1) ** 2).unsqueeze(-1)  # 形状 (n, d, 1)
 
     # エラーを計算
     err = (sigma2_score1 - s1_table_flat) ** 2 + (sigma4_score2 - s2_table_flat) ** 2  # 形状 (n, d, total_combinations)
@@ -222,23 +271,23 @@ def calculate_dellogp_delx_t(I, y, delI, num_atoms, sigma=0.5, epsilon=1e-8):
 
     # Compute the product (I - y) * delI
     product = difference * delI  # Shape: (n, 5, 5, 5, m, 3)
+    product = np.nan_to_num(product, posinf=1e2, neginf=-1e2)
+    
 
     # Sum over the (5, 5, 5) dimensions
     sum_product = np.sum(product, axis=(1, 2, 3))  # Shape: (n, m, 3)
+    #print(sum_product[0])
 
     # Ensure sum_product is at least epsilon to prevent division by zero or negative values
-    sum_product = np.maximum(sum_product, epsilon)
+    #sum_product = np.maximum(sum_product, epsilon)
 
     # Compute the intermediate result
-    intermediate_result = -1 / sigma**2 * sum_product  # Shape: (n, m, 3)
+    #intermediate_result = -1 / sigma**2 * sum_product  # Shape: (n, m, 3)
+    intermediate_result = -1 * sum_product  # Shape: (n, m, 3)
 
     # Clip the intermediate_result to prevent inf values
     # Replace positive inf with 1e10 and negative inf with -1e10
     intermediate_result = np.nan_to_num(intermediate_result, posinf=1e10, neginf=-1e10)
-
-    # Alternatively, you can use np.clip to set a range for intermediate_result
-    # max_val = 1e10
-    # intermediate_result = np.clip(intermediate_result, a_min=-max_val, a_max=max_val)
 
     # Initialize the final result list
     final_result = []
@@ -503,6 +552,75 @@ def scale_dellogp(dellogp_delx_t, pred_x, num_atoms, epsilon=1e-8):
     # スケーリングされたテンソルを元の形状に結合
     return torch.cat(scaled_dellogp_delx_t_list, dim=0)
 
+def scale_dellogp_percentile(dellogp_delx_t, pred_x, num_atoms, percentile=95, epsilon=1e-8):
+    if isinstance(num_atoms, torch.Tensor):
+        num_atoms = num_atoms.tolist()
+    
+    split_dellogp_delx_t = torch.split(dellogp_delx_t, num_atoms)
+    split_pred_x = torch.split(pred_x, num_atoms)
+
+    scaled_dellogp_delx_t_list = []
+
+    for dellogp, pred in zip(split_dellogp_delx_t, split_pred_x):
+        # パーセンタイルを計算
+        abs_dellogp = dellogp.abs()
+        abs_pred = pred.abs()
+        perc_dellogp = torch.quantile(abs_dellogp, percentile / 100.0, dim=0, keepdim=True)
+        perc_pred = torch.quantile(abs_pred, percentile / 100.0, dim=0, keepdim=True)
+        
+        scaling_factors = perc_pred / (perc_dellogp + epsilon)
+        scaled_dellogp = dellogp * scaling_factors
+
+        scaled_dellogp_delx_t_list.append(scaled_dellogp)
+
+    return torch.cat(scaled_dellogp_delx_t_list, dim=0)
+
+def scale_dellogp_std(dellogp_delx_t, pred_x, num_atoms, epsilon=1e-8):
+    if isinstance(num_atoms, torch.Tensor):
+        num_atoms = num_atoms.tolist()
+    
+    split_dellogp_delx_t = torch.split(dellogp_delx_t, num_atoms)
+    split_pred_x = torch.split(pred_x, num_atoms)
+
+    scaled_dellogp_delx_t_list = []
+
+    for dellogp, pred in zip(split_dellogp_delx_t, split_pred_x):
+        # 標準偏差を計算
+        std_dellogp = dellogp.std(dim=0, keepdim=True)
+        std_pred = pred.std(dim=0, keepdim=True)
+        
+        # スケーリングファクターを計算（ゼロ除算を回避）
+        scaling_factors = std_pred / (std_dellogp + epsilon)
+        scaled_dellogp = dellogp * scaling_factors
+
+        scaled_dellogp_delx_t_list.append(scaled_dellogp)
+
+    return torch.cat(scaled_dellogp_delx_t_list, dim=0)
+
+def scale_dellogp_clip(dellogp_delx_t, pred_x, num_atoms, epsilon=1e-8):
+    if isinstance(num_atoms, torch.Tensor):
+        num_atoms = num_atoms.tolist()
+    
+    split_dellogp_delx_t = torch.split(dellogp_delx_t, num_atoms)
+    split_pred_x = torch.split(pred_x, num_atoms)
+
+    scaled_dellogp_delx_t_list = []
+
+    for dellogp, pred in zip(split_dellogp_delx_t, split_pred_x):
+        # pred_x の絶対値の最大値を計算
+        max_abs_pred = pred.abs().max()
+        
+        # クリッピングの閾値を設定（pred_x の絶対値最大の2倍）
+        clipping_threshold = 2 * max_abs_pred + epsilon
+
+        # dellogp_delx_t をクリッピング
+        clipped_dellogp = torch.clamp(dellogp, min=-clipping_threshold, max=clipping_threshold)
+
+        scaled_dellogp_delx_t_list.append(clipped_dellogp)
+
+    return torch.cat(scaled_dellogp_delx_t_list, dim=0)
+
+
 
 def log_with_timestamp(message):
     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {message}")
@@ -545,10 +663,12 @@ def check_nan_inf(data, marker='*'):
 def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batch, fq):
     # 新しい方法でmとcを求める
     s1_table, s2_table, m_values, c_values = generate_tables(x_t)
+    #s1_table, s2_table, m_values, c_values = generate_tables_2(x_t)
     #log_with_timestamp("1")
 
     #m, c = find_best_fit(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x, 2)
     m, c = find_best_fit_optimized(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
+    #m, c = find_best_fit_optimized_2(s1_table, s2_table, m_values, c_values, pred_x, pred_x_d2, sigma_x)
     #log_with_timestamp("2")
 
     # yとIを求める
@@ -613,13 +733,14 @@ def calculate_dellogp_delx_t_with_all_flow(x_t, pred_x, pred_x_d2, sigma_x, batc
     check_nan_inf(dellogp_delx_t, "dellogp_delx_t_2")
     #log_with_timestamp("13")
     dellogp_delx_t = torch.tensor(dellogp_delx_t).to('cuda').type(pred_x.dtype)
+    dellogp_delx_t_pre = dellogp_delx_t
     check_nan_inf(dellogp_delx_t, "dellogp_delx_t_3")
     #log_with_timestamp("14")
     dellogp_delx_t = scale_dellogp(dellogp_delx_t, pred_x, batch.num_atoms)
     check_nan_inf(dellogp_delx_t, "dellogp_delx_t_4")
     #log_with_timestamp("15")
     
-    return dellogp_delx_t, m, c
+    return dellogp_delx_t, dellogp_delx_t_pre, m, c
 
 
 def sigma_norm(sigma, T=1.0, sn = 10000):
@@ -764,6 +885,26 @@ def generate_crystal_structures_4():
     
     return structures
 
+def generate_crystal_structures_5():
+    scale_factor = 0.6
+    offset = 0.5 * (1 - scale_factor)
+
+    # 固定データセット line[:5]
+    line = [[0.5, 0.5, (i + 4) * 0.125] for i in range(-2, 3)]
+    line = [[x * scale_factor + offset, y * scale_factor + offset, z] for x, y, z in line]
+
+    # 構造データセット
+    structures = []
+    for _ in range(10000):  # 合計 10000 のデータを生成
+        if np.random.rand() < 0.02:  # 1%の確率でline[:5]を含む
+            structures.append(line[:5])
+        else:
+            # 0~1の範囲でランダムな座標を生成
+            random_structure = [[np.random.rand(), np.random.rand(), np.random.rand()] for _ in range(5)]
+            structures.append(random_structure)
+
+    return structures
+
 def generate_crystal_Cu3Au():
 
     # Cu₃Auの超格子構造（固定の構造）
@@ -799,6 +940,34 @@ def generate_crystal_Cu3Au():
             structures.append(frac_coords_superlattice)
         else:
             structures.append(generate_random_frac_coords())
+    
+    return structures
+
+def generate_crystal_Cu8Au2(convert=True):
+    # 10000個の結晶構造を格納するリスト
+    structures = []
+
+    au_regular_coords = [
+        [0.25, 0, 0],
+        [0, 0.5, 0],
+        [0, 0, 0.5],
+        [0.75, 0, 0],
+        [0.5, 0.5, 0],
+        [0.5, 0, 0.5],
+        [0.25, 0.5, 0.5],
+        [0.75, 0.5, 0.5],
+    ]
+    
+    # 10000要素を生成
+    for i in range(10000):
+        if convert:
+            shuffled_coords = random.sample(au_regular_coords, len(au_regular_coords))
+            frac_coords_random = shuffled_coords
+        else:
+            # そのままau_regular_coordsを使用
+            frac_coords_random = au_regular_coords.copy()
+        
+        structures.append(frac_coords_random)
     
     return structures
 

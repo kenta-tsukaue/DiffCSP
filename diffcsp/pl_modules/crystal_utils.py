@@ -6,6 +6,9 @@ import pandas as pd
 
 #　パス
 scattering_factor_path = "/public/tsukaue/DiffCSP/utils_data/scattering_factors.xlsx"
+h_list = [-2, -1, 0, 1, 2]
+k_list = [-2, -1, 0, 1, 2]
+l_list = [-2, -1, 0, 1, 2]
 
 def check_nan_inf(data, marker='*'):
     """
@@ -44,20 +47,26 @@ def check_nan_inf(data, marker='*'):
 def scattering_factor_torch_batch_from_file(atom_types):
     """
     PyTorchを使用して散乱因子を計算する関数(バッチ対応）。
-
+    
     Parameters:
     - atom_types (torch.Tensor): 形状 (C, A_max) のテンソル。各原子の原子番号。
-    - scattering_factor_path (str): 散乱因子データのExcelファイルのパス。
-
+    
     Returns:
-    - f_q (torch.Tensor): 形状 (C, A_max, 125) のテンソル。各原子の散乱因子。
+    - f_q (torch.Tensor): 形状 (C, A_max, hkl) のテンソル。各原子の散乱因子。
     """
     # デバイスの取得（atom_typesと同じデバイスに配置）
     device = atom_types.device
 
     # Excelファイルから散乱因子データを読み込む
     scattering_factor_df = pd.read_excel(scattering_factor_path)
-    #scattering_factor_df = scattering_factor_df.loc[~(scattering_factor_df[['h', 'k', 'l']] == 0).any(axis=1)]
+
+    # h, k, l のフィルタリングを追加
+    scattering_factor_df = scattering_factor_df[
+        scattering_factor_df['h'].isin(h_list) &
+        scattering_factor_df['k'].isin(k_list) &
+        scattering_factor_df['l'].isin(l_list)
+    ]
+    
 
     # 必要な列のみを抽出
     scattering_factor_df = scattering_factor_df[['atom_num', 'af0']]
@@ -68,8 +77,9 @@ def scattering_factor_torch_batch_from_file(atom_types):
     # atom_numの最大値を取得
     max_atom_num = grouped.index.max()
 
-    # af0の長さを確認（すべて125であることを前提）
+    # af0の長さを確認（すべてhklであることを前提）
     af0_length = grouped.iloc[0].__len__()  # 最初のatom_numのaf0の長さを取得
+    #print("af0_length", af0_length)
     assert all(len(af0_list) == af0_length for af0_list in grouped), "すべてのatom_numでaf0の長さが一致していません。"
 
     # 最大原子番号に基づいてルックアップテーブルを初期化（0も含めるためmax_atom_num + 1）
@@ -87,12 +97,13 @@ def scattering_factor_torch_batch_from_file(atom_types):
 
     # atom_typesが0の場合はルックアップテーブルの0番目（全て0）を使用
     # その他の場合は対応するaf0を取得
-    # atom_typesの形状は (C, A_max) で、出力f_qの形状は (C, A_max, 125)
+    # atom_typesの形状は (C, A_max) で、出力f_qの形状は (C, A_max, hkl)
     f_q = lookup_table[atom_types]  # 高度なインデックス付けを使用
 
-    print(f_q.shape)
+    #print("atom_types", f_q.shape)
 
     return f_q
+
 
 def get_fq(batch):
     """
@@ -151,9 +162,14 @@ def calculate_y_vectorized_re(batch, c, fq):
     atom_types = batch['atom_types'].to(device)  # [Total_atoms]
     
     # Kベクトルの生成
-    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    # Kベクトルの生成（h_list, k_list, l_listを使用）
+    h_tensor = torch.tensor(h_list, device=device, dtype=m.dtype)
+    k_tensor = torch.tensor(k_list, device=device, dtype=m.dtype)
+    l_tensor = torch.tensor(l_list, device=device, dtype=m.dtype)
+    
+    K1, K2, K3 = torch.meshgrid(h_tensor, k_tensor, l_tensor, indexing='ij')  # [len(h_list), len(k_list), len(l_list)]
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [len(h_list)*len(k_list)*len(l_list), 3]
+    #print(K.shape)
     num_k = K.shape[0]
     
     # 出力テンソルの初期化
@@ -225,8 +241,7 @@ def calculate_y_vectorized_re(batch, c, fq):
     
     # Z に格納
     Z += sum_j  # [C, K]
-    Z = Z.view(num_crystals, 5, 5, 5)
-    Z[:, 2, 2, 2] = 0
+    Z = Z.view(num_crystals, len(h_list), len(k_list), len(l_list))
     
     # 最後にZをnumpy.ndarrayに変換
     Z_numpy = Z.cpu().numpy()
@@ -254,10 +269,13 @@ def calculate_I_vectorized_re(batch, m, c, fq):
     c = c.to(device)  # [Total_atoms, 3]
     atom_types = batch['atom_types'].to(device)  # [Total_atoms]
     
-    # Kベクトルの生成
-    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    # Kベクトルの生成（h_list, k_list, l_listを使用）
+    h_tensor = torch.tensor(h_list, device=device, dtype=m.dtype)
+    k_tensor = torch.tensor(k_list, device=device, dtype=m.dtype)
+    l_tensor = torch.tensor(l_list, device=device, dtype=m.dtype)
+    
+    K1, K2, K3 = torch.meshgrid(h_tensor, k_tensor, l_tensor, indexing='ij')  # [len(h_list), len(k_list), len(l_list)]
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [len(h_list)*len(k_list)*len(l_list), 3]
     num_k = K.shape[0]
     
     # 出力テンソルの初期化
@@ -330,8 +348,7 @@ def calculate_I_vectorized_re(batch, m, c, fq):
     
     # Z に格納
     Z += sum_j  # [C, K]
-    Z = Z.view(num_crystals, 5, 5, 5)
-    Z[:, 2, 2, 2] = 0
+    Z = Z.view(num_crystals, len(h_list), len(k_list), len(l_list))
     
     # 最後にZをnumpy.ndarrayに変換
     Z_numpy = Z.cpu().numpy()
@@ -365,10 +382,13 @@ def calculate_delI_delm_delx_t_vectorized(batch, m, c, delm_delx_t, fq):
     delm_delx_t = delm_delx_t.to(device)  # [Total_atoms]
     atom_types = batch['atom_types'].to(device)  # [Total_atoms]
     
-    # Kベクトルの生成
-    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  
+    # Kベクトルの生成（h_list, k_list, l_listを使用）
+    h_tensor = torch.tensor(h_list, device=device, dtype=m.dtype)
+    k_tensor = torch.tensor(k_list, device=device, dtype=m.dtype)
+    l_tensor = torch.tensor(l_list, device=device, dtype=m.dtype)
+    
+    K1, K2, K3 = torch.meshgrid(h_tensor, k_tensor, l_tensor, indexing='ij')  # [len(h_list), len(k_list), len(l_list)]
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [len(h_list)*len(k_list)*len(l_list), 3]
     num_k = K.shape[0]
     
     # 出力テンソルの初期化
@@ -449,10 +469,10 @@ def calculate_delI_delm_delx_t_vectorized(batch, m, c, delm_delx_t, fq):
     check_nan_inf(temp_result, "temp_result_1")
     # delm_coords[i] を乗算
     #print(temp_result.shape)
-    # delm_i の形状を [16, 5, 5, 125, 3] に揃える
+    # delm_i の形状を [16, 5, 5, len(h_list)xlen(k_list)xlen(l_list), 3] に揃える
     delm_i = delm_i.unsqueeze(3)  # [16, 5, 1, 1, 3]
     #print(delm_i.shape)
-    delm_i = delm_i.expand(-1, -1, -1, 125, -1)  # [C, A_max, A_max, K, 3]
+    delm_i = delm_i.expand(-1, -1, -1, len(h_list)*len(k_list)*len(l_list), -1)  # [C, A_max, A_max, K, 3]
     #print(delm_i.shape)
     # delm_i の中に inf がある場合、最大値で置換
     delm_i = torch.where(torch.isinf(delm_i), torch.tensor(upper_limit, device=delm_i.device), delm_i)
@@ -469,9 +489,8 @@ def calculate_delI_delm_delx_t_vectorized(batch, m, c, delm_delx_t, fq):
     # Z に格納
     Z += sum_j  # [C, K, A_max, 3]
 
-    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
-    #print(Z[0][2][2][1])
-    Z[:, 2, 2, 2, :, :] = 0
+    Z = Z.view(num_crystals, len(h_list), len(k_list), len(l_list), num_atoms_max, 3)
+
     # Clamp を適用
     Z = torch.clamp(Z, max=upper_limit)
 
@@ -511,10 +530,13 @@ def calculate_delI_delc_delx_t_vectorized(batch, m, c, delc_delx_t, fq):
     delc_delx_t = delc_delx_t.to(device)  # [Total_atoms]
     atom_types = batch['atom_types'].to(device)  # [Total_atoms]
 
-    # Kベクトルの生成
-    k_range = torch.tensor([-2, -1, 0, 1, 2], device=device, dtype=m.dtype)
-    K1, K2, K3 = torch.meshgrid(k_range, k_range, k_range, indexing='ij')  
-    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)
+    # Kベクトルの生成（h_list, k_list, l_listを使用）
+    h_tensor = torch.tensor(h_list, device=device, dtype=m.dtype)
+    k_tensor = torch.tensor(k_list, device=device, dtype=m.dtype)
+    l_tensor = torch.tensor(l_list, device=device, dtype=m.dtype)
+    
+    K1, K2, K3 = torch.meshgrid(h_tensor, k_tensor, l_tensor, indexing='ij')  # [len(h_list), len(k_list), len(l_list)]
+    K = torch.stack([K1, K2, K3], dim=-1).reshape(-1, 3)  # [len(h_list)*len(k_list)*len(l_list), 3]
     num_k = K.shape[0]
     
     # 出力テンソルの初期化
@@ -583,8 +605,8 @@ def calculate_delI_delc_delx_t_vectorized(batch, m, c, delc_delx_t, fq):
     # Z に格納
     Z += sum_j  # [C, K, A_max, 3]
 
-    # 125を5x5x5に再構成
-    Z = Z.view(num_crystals, 5, 5, 5, num_atoms_max, 3)
+    # 再構成
+    Z = Z.view(num_crystals, len(h_list), len(k_list), len(l_list), num_atoms_max, 3)
     #print(Z[0][2][2][1])
 
     Z[:, 2, 2, 2, :, :] = 0

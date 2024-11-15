@@ -6,7 +6,7 @@ num_layers: 6 #default 6
 act_fn: silu
 dis_emb: sin
 num_freqs: 128
-edge_style: fc
+edge_style: fc #knn
 max_neighbors: ${model.max_neighbors}
 cutoff: ${model.radius}
 ln: true
